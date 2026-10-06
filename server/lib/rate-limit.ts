@@ -20,7 +20,7 @@ export async function checkAndBumpRateLimit(
   maxPerWindow: number,
   windowSeconds: number,
   /**
-   * What to CALL this cap in the log — `'pwreset'`, `'signup'`, `'invite-request'`.
+   * What to CALL this cap in the log — `'pwreset'`, `'signup'`, `'signup-page'`.
    *
    * Passed separately rather than derived from `rateKey`, because every `rateKey` in this codebase
    * is built out of the caller's email and IP (see the three `RATE_KEY` builders): the key is the

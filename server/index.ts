@@ -8,7 +8,8 @@ import {
   buildProductJsonLdScript,
   buildProductLlmsTxt,
 } from './lib/llms';
-import { renderInviteForm } from './lib/invite-form';
+import { renderSignupForm } from './lib/signup-form';
+import { TURNSTILE_SCRIPT_ORIGIN } from './lib/turnstile';
 import { requestContext } from './lib/log';
 import { tenantMiddleware } from './lib/middleware';
 import { PAGE_STYLE } from './lib/page-style';
@@ -21,11 +22,11 @@ import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
 import { billingRoutes } from './routes/billing';
 import { bookingRoutes } from './routes/bookings';
-import { inviteRequestRoutes } from './routes/invite-request';
 import { oauthRoutes } from './routes/oauth';
 import { ownerRoutes } from './routes/owner';
 import { passwordResetRoutes } from './routes/password-reset';
 import { publicRoutes } from './routes/public';
+import { signupPageRoutes } from './routes/signup-page';
 import { signupRoutes } from './routes/signup';
 import { tenantTokenRoutes } from './routes/tenant-tokens';
 import { tokenRoutes } from './routes/tokens';
@@ -84,7 +85,13 @@ app.use('*', async (c, next) => {
   // blocked by `default-src 'self'` before it loads — silently, since the mount takes no space
   // until the page reports a height.
   const origin = premiumOrigin(c.env);
-  const frameSrc = origin ? `; frame-src 'self' ${origin}` : '';
+  // /signup is the ONE page that runs a third-party script: Cloudflare Turnstile's widget, a
+  // script plus an iframe from challenges.cloudflare.com (routes/signup-page.ts). The allowance
+  // is added for that exact path only — every other marketing page stays script-free.
+  const turnstile = c.req.path === '/signup' ? TURNSTILE_SCRIPT_ORIGIN : null;
+  const frames = [turnstile, origin].filter(Boolean).join(' ');
+  const frameSrc = frames ? `; frame-src 'self' ${frames}` : '';
+  const scriptSrc = turnstile ? `; script-src 'self' ${turnstile}` : '';
   if (c.req.path.startsWith('/embed')) {
     c.header('Content-Security-Policy', `${EMBEDDABLE_CSP}${frameSrc}`);
   } else {
@@ -95,7 +102,7 @@ app.use('*', async (c, next) => {
     // — on any deployment whose paid surface is on a different host. The commercial deployment
     // happens to publish the dashboard's own origin, which is the only reason nothing noticed.
     // The widget gets no `connect-src`: nothing in it fetches that origin.
-    const csp = origin ? `${LOCKED_CSP}${frameSrc}; connect-src 'self' ${origin}` : LOCKED_CSP;
+    const csp = `${LOCKED_CSP}${scriptSrc}${frameSrc}${origin ? `; connect-src 'self' ${origin}` : ''}`;
     c.header('Content-Security-Policy', csp);
     c.header('X-Frame-Options', 'DENY');
   }
@@ -125,7 +132,7 @@ app.route('/api', signupRoutes); // /api/signup/* — no slug ('signup' is a res
 app.route('/api', passwordResetRoutes); // /api/password-reset/* — no slug ('password-reset' is a reserved slug)
 app.route('/api', ownerRoutes); // /api/owner/* — owner-token-gated ('owner' is a reserved slug)
 app.route('/', oauthRoutes); // global OAuth callback — no slug, no tenant middleware
-app.route('/', inviteRequestRoutes); // GET/POST /request-invite* — a page, not an /api route
+app.route('/', signupPageRoutes); // GET/POST /signup, /signup/sent (+ /request-invite redirects) — pages
 
 /** Serve a built Vite page for a worker-routed path, with mutable headers. */
 const page = (asset: string) =>
@@ -422,7 +429,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <p class="note">
               The demo is there so you can poke around without signing up for anything.
-              Pawservation itself is invite-only while it grows, and you can
+              When you&rsquo;re ready, <a href="#invite-h">sign up</a> with just your email, or
               <a href="/admin">sign in</a> if you already have an account.
             </p>
           </div>
@@ -710,9 +717,9 @@ const LANDING_HTML = `<!doctype html>
       <section class="cta-band" aria-labelledby="invite-h">
         <div class="wrap">
           <div class="cta-panel">
-            <h2 id="invite-h">Ask for an invite</h2>
-            <p>Pawservation is invite-only while it grows. Tell us about your business and we&rsquo;ll set up your services, rates, and booking page.</p>
-            ${renderInviteForm()}
+            <h2 id="invite-h">Sign up</h2>
+            <p>Enter your email and we&rsquo;ll email you a sign-up link. Then set up your services, rates, and booking page.</p>
+            ${renderSignupForm()}
           </div>
         </div>
       </section>
@@ -994,7 +1001,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="install-copy">
             <span class="label">Getting started</span>
             <h2 id="setup-h">Three steps to a booking page</h2>
-            <p><strong>Ask for an invite.</strong> Pawservation is invite-only while it grows, so tell us about your business and we will email you a sign-up link.</p>
+            <p><strong>Sign up.</strong> Enter your email on the homepage and we will email you a sign-up link.</p>
             <p><strong>Set up your services and rates.</strong> The wizard offers presets, each a whole service already shaped, so you tap the ones that describe you and type your prices.</p>
             <p><strong>Paste one line on your website.</strong> Into a page on Squarespace, Wix or plain HTML, swapping in your own short name. The widget sizes itself to fit, and there is an iframe version if your host strips scripts.</p>
             <p class="note">Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} a year, and adds card payments, extra sitters and booking by chat. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
@@ -1400,7 +1407,7 @@ const CONTACT_HTML = `<!doctype html>
     ${pageHead(
       '/contact',
       'Contact | Pawservation',
-      'How to reach Pawservation: ask for an invite, get help with an account you already have, or find out where to go if you are a pet owner looking for your own sitter.',
+      'How to reach Pawservation: sign up, get help with an account you already have, or find out where to go if you are a pet owner looking for your own sitter.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1439,7 +1446,7 @@ const CONTACT_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>You run a pet-care business and want an account</h2>
-            <p>Use the <a href="/#invite-h">invite form on the homepage</a>. Tell us what you offer and roughly how you work; the reply sets up your services, rates and booking page so you aren&rsquo;t starting from an empty screen. Pawservation is invite-only while it grows, so this is the front door rather than a marketing capture form.</p>
+            <p>Use the <a href="/#invite-h">sign-up form on the homepage</a>. Enter your email and we&rsquo;ll email you a sign-up link; from there you set up your services, rates and booking page.</p>
           </div>
           <div class="feature">
             <h2>You already have an account and something is wrong</h2>

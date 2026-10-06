@@ -15,7 +15,7 @@ const env = {
 
 /**
  * Every one of these throws is logged verbatim by a caller (`routes/signup.ts`,
- * `routes/password-reset.ts`, `routes/owner.ts`, `routes/invite-request.ts`). Whatever ends up in
+ * `routes/password-reset.ts`, `routes/owner.ts`, `routes/signup-page.ts`). Whatever ends up in
  * the message ends up in the Workers log, so the message is a log-hygiene surface, not just an
  * error string. Same rule `lib/google-calendar.ts`'s `describeTokenError` already applies to
  * Google: lift the machine-readable code, never the free-text body.

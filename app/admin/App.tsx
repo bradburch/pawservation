@@ -231,12 +231,22 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
       )}
       <div className="pb-login-signup">
         {resetOpen ? null : !signupOpen ? (
-          <button type="button" className="pb-linklike" onClick={() => setSignupOpen(true)}>
-            New here? Enter your email to get set up
-          </button>
+          <>
+            <button type="button" className="pb-linklike" onClick={() => setSignupOpen(true)}>
+              New here? Enter your email to get set up
+            </button>
+            {/* This toggle is allowlist-only (/api/signup/start never adds a row); a sitter with
+                no invite signs up at /signup, the Turnstile-guarded front door. */}
+            <a className="pb-linklike" href="/signup">
+              Not invited yet? Sign up
+            </a>
+          </>
         ) : signupSent ? (
           <>
-            <p>Check your email — if you&rsquo;ve been invited, a setup link is on its way.</p>
+            <p>
+              Check your email — if you&rsquo;ve been invited, a setup link is on its way. Not
+              invited yet? <a href="/signup">Sign up here</a>.
+            </p>
             {prototypeLink && (
               <p>
                 {/* Dev only: the server includes prototypeLink when no email provider is

@@ -104,6 +104,23 @@ interface Env {
    * billing endpoint, and (CompedUntil only, the trial) signup.
    */
   PLAN_ENFORCE?: string;
+  /**
+   * Self-serve signup's kill switch (`routes/signup-page.ts`). Exactly the string `"review"` puts
+   * POST /signup back on manual review: only an allowlisted email gets a link, and every other
+   * address is emailed to the owner to allowlist by hand. Anything else, including unset, is OPEN:
+   * a Turnstile-verified address is allowlisted on the spot and emailed its link.
+   *
+   * Set with `wrangler secret put SIGNUP_MODE`, NOT as a `wrangler.jsonc` var or a dashboard var:
+   * `wrangler deploy` (which CI runs on every merge) replaces the worker's plain vars with the
+   * file's, so a dashboard flip would be undone by the next unrelated deploy. A secret survives.
+   */
+  SIGNUP_MODE?: string;
+  /** Turnstile widget site key for /signup (public; rendered into the page). Both this and
+   * `TURNSTILE_SECRET_KEY` are required outside local development, or /signup answers 503
+   * (`server/lib/turnstile.ts`). */
+  TURNSTILE_SITE_KEY?: string;
+  /** Turnstile Siteverify secret. `wrangler secret put TURNSTILE_SECRET_KEY`; never logged. */
+  TURNSTILE_SECRET_KEY?: string;
   /** Google OAuth2 client id. `wrangler secret put GOOGLE_CLIENT_ID`. */
   GOOGLE_CLIENT_ID: string;
   /**

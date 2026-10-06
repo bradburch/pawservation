@@ -41,6 +41,11 @@
   // "true" means on — a JSON `true` is read as off. The exempt writes and her booking page are
   // unaffected. Both flags live in this file rather than in the dashboard so the flip and the unflip
   // are each a deploy that the repo records. To roll back, remove `PLAN_ENFORCE` and redeploy.
+  //
+  // SIGNUP_MODE, TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY are deliberately NOT here: set them
+  // with `wrangler secret put`. A secret survives `wrangler deploy`, so the SIGNUP_MODE kill switch
+  // ("review" = manual allowlist; unset = open self-serve) flips without a code deploy and is not
+  // undone by the next one. See env.d.ts and server/routes/signup-page.ts.
   "vars": {
     "PREMIUM_ORIGIN": "https://pawservation.com",
     "PLAN_SUBSCRIBE": "true",
@@ -95,6 +100,9 @@
       "/contact",
       "/privacy",
       "/terms",
+      "/signup",
+      "/signup/sent",
+      // Retired invite-request pages, now 301s to /signup — still worker-routed so the redirect runs.
       "/request-invite",
       "/request-invite/thanks",
       // Google redirects the sitter's popup here. Nothing is emitted at this path today, so it

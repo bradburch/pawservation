@@ -8,8 +8,8 @@ one `<script>` tag into their website (Squarespace, Wix, plain HTML) and gets a 
 booking calendar; behind it sits a full admin dashboard for running the business. One
 Cloudflare Worker (Hono) serves the JSON API plus four separately-built Vite bundles
 (three React apps — embed, admin, setup — plus a static demo host page), backed by D1
-(SQLite) and KV. Sitter accounts are **invite-only**, managed from a platform-owner
-console.
+(SQLite) and KV. Sitters sign up themselves at `/signup` (Turnstile-guarded), or, with
+`SIGNUP_MODE=review`, are allowlisted by hand from a platform-owner console.
 
 See [docs/index.md](./docs/index.md) for a project overview, or `CALENDAR_LOGIC.md` for
 the availability/conflict math.
@@ -160,13 +160,14 @@ npx wrangler dev --var ENVIRONMENT:development --var RESEND_API_KEY: --var RESEN
 
 Then open **http://localhost:8787**:
 
-| URL                 | What                                                        |
-| ------------------- | ----------------------------------------------------------- |
-| `/`                 | Marketing landing page                                      |
-| `/demo`             | Demo host page — two tenants' widgets embedded side by side |
-| `/embed/sunny-paws` | The booking widget for the seeded "Sunny Paws" tenant       |
-| `/admin`            | Sitter admin dashboard (also the invite-signup entry point) |
-| `/setup`            | Create-password page reached from emailed signup links      |
+| URL                 | What                                                         |
+| ------------------- | ------------------------------------------------------------ |
+| `/`                 | Marketing landing page                                       |
+| `/demo`             | Demo host page — two tenants' widgets embedded side by side  |
+| `/embed/sunny-paws` | The booking widget for the seeded "Sunny Paws" tenant        |
+| `/admin`            | Sitter admin dashboard (also the invited-signup entry point) |
+| `/signup`           | Self-serve sitter signup (email + Turnstile)                 |
+| `/setup`            | Create-password page reached from emailed signup links       |
 
 Seeded demo logins:
 
@@ -312,7 +313,7 @@ stays `true` too — it's what makes that staging URL work — don't touch it.
 ## Plans and billing
 
 Every joined sitter is on Solo or Pro; a plan decides what her account can do, not whether she was
-allowed to join (see "Provisioning the first sitter" below — signup stays invite-only either way).
+allowed to join (see "Provisioning the first sitter" below — who may join is `SIGNUP_MODE`'s question).
 `server/lib/premium.ts` holds **four** one-expression predicates over the same handful of columns,
 and they answer four different questions:
 
@@ -655,7 +656,22 @@ var is set.
 
 ## Provisioning the first sitter
 
-Signup is invite-only and sitter-initiated:
+Signup is sitter-initiated, and `SIGNUP_MODE` decides who gets in:
+
+- **Open (the default, `SIGNUP_MODE` unset):** a sitter enters her email at `/signup` (the
+  landing page's form posts there). After a server-verified Cloudflare Turnstile check and two
+  soft rate limits (5/hour per email, 20/hour per IP), an address with no login is added to the
+  allowlist and emailed the same 30-minute setup link an invited sitter gets; the owner(s) get an
+  FYI email. From the link on, it is the invited path below, steps 3 and 4.
+- **Review (`wrangler secret put SIGNUP_MODE` with the value `review`):** `/signup` sends links to
+  allowlisted addresses only, and emails the owner(s) every other address to allowlist by hand —
+  the flow below. It is a secret rather than a var so it survives CI's deploys.
+
+`/signup` needs `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (both `wrangler secret put`);
+without them it answers 503 outside local development. The `/admin` "Get set up" form is
+allowlist-only in either mode.
+
+The invited path:
 
 1. **Bootstrap yourself as owner:** put your email in the `OWNER_EMAILS` secret, open
    `/admin`, and use the "Get set up" form with that email. You'll receive a single-use

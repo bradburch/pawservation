@@ -1266,6 +1266,14 @@ body {
 .pb-wrap button.pb-linklike:hover {
   color: var(--leaf);
 }
+/* The "Not invited yet? Sign up" link to /signup, on its own line under the toggle. */
+.pb-login-signup a.pb-linklike {
+  display: block;
+  margin-top: 8px;
+  color: var(--ink);
+  text-decoration-color: var(--leaf);
+  text-underline-offset: 2px;
+}
 /* Lets the table itself scroll sideways on a narrow viewport instead of the page body — a long
    email or the "Joined — business deleted" chip shouldn't be able to widen the whole page. */
 .pb-table-wrap {

@@ -1,7 +1,7 @@
 /**
- * Shared stylesheet for the LOCKED_CSP marketing pages (`/`, `/how-it-works`, and the
- * invite-request funnel at `/request-invite*`) — split out of server/index.ts so the new
- * routes/invite-request.ts page-renderers can reuse it without an import cycle (index.ts
+ * Shared stylesheet for the marketing pages (`/`, `/how-it-works`, and the sign-up pages at
+ * `/signup*`) — split out of server/index.ts so the routes/signup-page.ts renderers can reuse it
+ * without an import cycle (index.ts
  * mounts those routes, so the routes module cannot import back from index.ts).
  */
 export const PAGE_STYLE = /* css */ `
@@ -915,24 +915,24 @@ export const PAGE_STYLE = /* css */ `
         .btn { transition: none; }
       }
 
-      /* ── Invite-request form (inside the cta-band) ─────────────── */
-      .invite-form {
+      /* ── Sign-up form (the cta-band on / and the /signup page) ──── */
+      .signup-form {
         margin-top: 28px;
         text-align: left;
         display: grid;
         gap: 16px;
       }
-      .invite-field { display: flex; flex-direction: column; gap: 6px; }
-      .invite-field-wide { grid-column: 1 / -1; }
-      .invite-field label {
+      .signup-field { display: flex; flex-direction: column; gap: 6px; }
+      .signup-field-wide { grid-column: 1 / -1; }
+      .signup-field label {
         font-size: 0.82rem;
         font-weight: 600;
         color: #c4d2c6;
       }
-      .invite-optional { font-weight: 400; color: #8fa896; }
-      .invite-field input,
-      .invite-field select,
-      .invite-field textarea {
+      .signup-optional { font-weight: 400; color: #8fa896; }
+      .signup-field input,
+      .signup-field select,
+      .signup-field textarea {
         width: 100%;
         padding: 10px 12px;
         border-radius: 8px;
@@ -942,27 +942,27 @@ export const PAGE_STYLE = /* css */ `
         font-family: var(--sans);
         font-size: 0.92rem;
       }
-      .invite-field input::placeholder,
-      .invite-field textarea::placeholder { color: #8fa896; }
-      .invite-field input:focus,
-      .invite-field select:focus,
-      .invite-field textarea:focus {
+      .signup-field input::placeholder,
+      .signup-field textarea::placeholder { color: #8fa896; }
+      .signup-field input:focus,
+      .signup-field select:focus,
+      .signup-field textarea:focus {
         outline: 2px solid #fff;
         outline-offset: 1px;
       }
-      .invite-field select option { color: var(--ink); }
-      .invite-field textarea { resize: vertical; min-height: 64px; }
+      .signup-field select option { color: var(--ink); }
+      .signup-field textarea { resize: vertical; min-height: 64px; }
       /* Honeypot: visually hidden off-screen (not display:none) so a naive bot's fill-every-field
          pass still finds and fills it, while tabindex="-1" on the input keeps it out of a real
          visitor's keyboard tab order and it's never in view to click. */
-      .invite-hp {
+      .signup-hp {
         position: absolute;
         left: -9999px;
         width: 1px;
         height: 1px;
         overflow: hidden;
       }
-      .invite-submit {
+      .signup-submit {
         grid-column: 1 / -1;
         display: flex;
         flex-wrap: wrap;
@@ -970,8 +970,8 @@ export const PAGE_STYLE = /* css */ `
         gap: 16px;
         margin-top: 4px;
       }
-      .invite-submit button { border: 0; cursor: pointer; }
+      .signup-submit button { border: 0; cursor: pointer; }
       @media (min-width: 640px) {
-        .invite-form { grid-template-columns: 1fr 1fr; }
+        .signup-form { grid-template-columns: 1fr 1fr; }
       }
 `;

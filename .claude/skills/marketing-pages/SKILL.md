@@ -1,13 +1,14 @@
 ---
 name: marketing-pages
-description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /how-it-works, /about, /contact, /privacy, /terms, /request-invite) — canonical URLs, robots/llms.txt, JSON-LD, CSP script-free rule, og-cards. Use when touching these pages or their SEO/agent-discoverability surface.
+description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /how-it-works, /about, /contact, /privacy, /terms, /signup) — canonical URLs, robots/llms.txt, JSON-LD, CSP script-free rule, og-cards. Use when touching these pages or their SEO/agent-discoverability surface.
 ---
 
 # Marketing pages, SEO and agent-discoverability
 
 Six worker-rendered marketing pages (`/`, `/how-it-works`, `/about`, `/contact`, `/privacy`,
-`/terms`) plus the two `/request-invite` pages. All are rendered by `server/index.ts` (invite-request
-by `server/routes/invite-request.ts`), served under `LOCKED_CSP` + `X-Frame-Options: DENY`, and
+`/terms`) plus the two sign-up pages, `/signup` and `/signup/sent`. All are rendered by
+`server/index.ts` (the sign-up pages by `server/routes/signup-page.ts`), served under `LOCKED_CSP` +
+`X-Frame-Options: DENY`, and
 pinned by `server/__tests__/seo.test.ts` and `landing.test.ts`.
 
 ## The rules that bite from outside this file
@@ -27,6 +28,11 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   may be described as available either, with one standing exception the owner made on 2026-09-04:
   the Pro tier is presented as sold. No page may offer a checkout, a card form or a trial mechanic,
   because this repo contains no billing code.
+- **`/signup` is the ONE page with a third-party script**: Cloudflare Turnstile's widget, which
+  needs `script-src` and `frame-src` for `https://challenges.cloudflare.com`. The header middleware
+  adds both for that exact path and nowhere else; the landing form carries no widget and posts
+  the email to `/signup`, which answers with the challenge. `/request-invite` and its thanks page
+  are retired and 301 to `/signup`.
 
 ## `pageHead` and the canonical
 
@@ -62,7 +68,7 @@ anywhere.
 Every exclusion on this site is a **noindex the crawler must FETCH the resource to read**:
 
 - `<meta name="robots" content="noindex">` for `admin.html` / `setup.html` and
-  `/request-invite/thanks` (and the invite POST's 400 re-render — thin transactional pages a searcher
+  `/signup` and `/signup/sent` (and the sign-up POST's re-renders — thin transactional pages a searcher
   can only dead-end on);
 - an `X-Robots-Tag: noindex` response header (set in the header middleware for `/api/`) for JSON,
   which carries no meta tag.
@@ -210,7 +216,7 @@ recipe in `docs/og-card.md`.
 
 The published contact address is **`SUPPORT_EMAIL` in `server/lib/email.ts`**, declared beside
 `BRAND_ORIGIN` because it is the same class of thing: a public constant several modules state (the
-`/contact` page, the homepage `Organization` graph, the invite-request thanks page's fallback) and
+`/contact` page, the homepage `Organization` graph) and
 must not state differently. It is a **role address, not a person's** — printed on a public page and
 in machine-readable structured data, so it must survive whoever answers it. Deliberately distinct
 from `OWNER_EMAILS`, the owner-console AUTH allowlist; the two were briefly conflated and they answer
@@ -270,7 +276,7 @@ and most are a single declaration, which is the size of thing a tidy-up deletes.
 ## The em-dash budget
 
 `seo.test.ts`'s em-dash budget matches the **raw U+2014 character and both numeric entity forms**
-alongside `&mdash;`, and runs over the invite-request pages as well as the six `pageHead` ones.
+alongside `&mdash;`, and runs over the sign-up pages as well as the six `pageHead` ones.
 Matching the named entity alone was blind to 36 raw dashes — 24 of them served verbatim out of
 `PAGE_STYLE`'s own CSS comments, and two inside a `<title>` a visitor reads in her browser tab.
 

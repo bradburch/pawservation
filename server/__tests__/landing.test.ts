@@ -67,13 +67,16 @@ describe('GET / — landing page', () => {
     expect(body).toContain('data-pawservation-tenant');
   });
 
-  it('has exactly one on-page invite-request form posting to /request-invite, no mailto anywhere', async () => {
+  it('has exactly one on-page sign-up form posting to /signup, no mailto anywhere', async () => {
     const body = await landingBody();
     expect(body).not.toMatch(/href="mailto:/);
     expect(body.match(/<form\b/g)?.length).toBe(1);
-    expect(body).toContain('<form class="invite-form" method="post" action="/request-invite">');
-    expect(body).toContain('name="business"');
+    expect(body).toContain('<form class="signup-form" method="post" action="/signup">');
+    expect(body).toContain('name="email"');
     expect(body).toContain('name="fax"'); // honeypot field
+    // The widget lives on /signup, never here: this page stays script-free.
+    expect(body).not.toContain('cf-turnstile');
+    expect(body).toContain('email you a sign-up link');
   });
 
   it('makes no multi-pet pricing claim (rates ship with pet-mix-rates)', async () => {

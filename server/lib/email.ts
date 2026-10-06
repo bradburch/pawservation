@@ -18,7 +18,7 @@ export function isEmailConfigured(env: Env): boolean {
 }
 
 /** Escape a value for interpolation into an HTML email body (tenant-controlled text is untrusted).
- * Exported for reuse by lib/invite-form.ts, which echoes submitted form values back into the
+ * Exported for reuse by lib/signup-form.ts, which echoes a submitted email back into the
  * script-free 400 re-render — same untrusted-string-into-HTML problem, same fix. */
 export function htmlEscape(value: string): string {
   return value
@@ -32,7 +32,7 @@ export function htmlEscape(value: string): string {
  * The public origin of the product. Not guessed: it is the `custom_domain` route the worker is
  * bound to in wrangler.jsonc, and the same host `lib/demo.ts` allow-lists as "our own pages".
  * There is no origin on `Env`, and mail is not always sent inside a request (the calendar sweep
- * and the invite-request form are the exceptions), so the shell cannot derive one from the
+ * and the sign-up page's deferred sends are the exceptions), so the shell cannot derive one from the
  * incoming URL the way `sendSitterInvite` does for its setup link. Declared once here and reused
  * for the logo and the how-it-works links so the two can never point at different hosts.
  */
@@ -40,8 +40,7 @@ export const BRAND_ORIGIN = 'https://pawservation.com';
 
 /**
  * The published contact address, declared beside BRAND_ORIGIN for the same reason it is: several
- * modules state it (the /contact page, the homepage Organization graph, the invite-request thanks
- * page's fallback link) and two different "contact us" addresses is how one of them stops being
+ * modules state it (the /contact page and the homepage Organization graph) and two different "contact us" addresses is how one of them stops being
  * read. Deliberately a ROLE address rather than a person's: it is printed on a public page and in
  * machine-readable structured data, so it must survive whoever happens to answer it.
  *
@@ -127,7 +126,7 @@ export function emailButton(url: string, label: string): string {
  * What a Resend refusal may be told to say OUT LOUD.
  *
  * Every `resendPost` throw is logged verbatim by its caller (`routes/signup.ts`,
- * `routes/password-reset.ts`, `routes/owner.ts`, `routes/invite-request.ts`), so this message is a
+ * `routes/password-reset.ts`, `routes/owner.ts`, `routes/signup-page.ts`), so this message is a
  * log line, not merely an error string — and Resend's own bodies quote addresses back at you
  * ("You can only send testing emails to your own email address (x@y.com)"). Pasting the body in
  * puts a customer's email into the Workers log for a fault that has nothing to do with them.
@@ -387,21 +386,6 @@ export async function sendResetLink(env: Env, to: string, url: string): Promise<
   });
 }
 
-/** Every field the invite-request form collects (`routes/invite-request.ts`). Required fields
- * are always present after valibot validation; the rest are omitted from the notification
- * entirely when blank rather than sent as an empty line. */
-export type InviteRequestFields = {
-  business: string;
-  name: string;
-  email: string;
-  website: string;
-  city: string;
-  neighborhoods?: string;
-  services: string;
-  customerCount: string;
-  notes?: string;
-};
-
 // Built from character codes rather than a regex literal with an embedded control-character
 // range (e.g. /[\x00-\x1f]/), which is unreadable in a diff and trips ESLint's no-control-regex
 // rule. Matches one-or-more consecutive ASCII control characters, codepoints 0–31 inclusive
@@ -421,60 +405,40 @@ function clean(value: string): string {
 }
 
 /**
- * Notify the platform owner(s) of a prospective sitter's on-page invite request — the structured
- * replacement for the old bare `mailto:` link. Recipients are every address in `OWNER_EMAILS`
- * (one send, multiple `to`, per parseOwnerEmails); sender is RESEND_FROM_NOREPLY (account/platform
- * mail, not booking mail); `reply_to` is the prospect's own (cleaned) email, so the owner can hit
- * reply instead of copying the address out of the body. Throws if email is not configured, no
- * owners are configured, or Resend rejects the request — routes/invite-request.ts catches this
- * uniformly and falls back to a mailto-fallback thanks page rather than a 5xx.
+ * Tell the platform owner(s) about a self-serve signup request (`routes/signup-page.ts`) — an FYI
+ * in open mode, a to-do in review mode. Recipients are every address in `OWNER_EMAILS` (one send,
+ * multiple `to`); sender is RESEND_FROM_NOREPLY; `reply_to` is the sitter's own address, so the
+ * owner can answer her directly. Only a Turnstile-verified, rate-limited submission reaches this,
+ * and the email is the only submitter-controlled value: control characters stripped for the
+ * subject, escaped for the HTML. Throws if email or owners are unconfigured, or Resend refuses —
+ * the caller logs and swallows, since the sitter has already been answered.
  */
-export async function sendInviteRequest(env: Env, fields: InviteRequestFields): Promise<void> {
+export async function sendSignupNotice(
+  env: Env,
+  notice: { email: string; mode: 'open' | 'review' },
+): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
   const owners = parseOwnerEmails(env);
   if (owners.length === 0) throw new Error('No owner recipients configured.');
-
-  const f: InviteRequestFields = {
-    business: clean(fields.business),
-    name: clean(fields.name),
-    email: clean(fields.email),
-    website: clean(fields.website),
-    city: clean(fields.city),
-    neighborhoods: fields.neighborhoods ? clean(fields.neighborhoods) : undefined,
-    services: clean(fields.services),
-    customerCount: clean(fields.customerCount),
-    notes: fields.notes ? clean(fields.notes) : undefined,
-  };
-
-  // Every field is submitter-controlled → htmlEscape'd for the HTML body. Subject/text are
-  // plain-text JSON fields in Resend's API — no escaping needed there (control chars are already
-  // stripped above, so the subject line in particular can't fake extra structure).
-  const rows: [string, string | undefined][] = [
-    ['Business', f.business],
-    ['Contact name', f.name],
-    ['Email', f.email],
-    ['Website', f.website],
-    ['City', f.city],
-    ['Neighborhoods', f.neighborhoods],
-    ['Services wanted', f.services],
-    ['Roughly how many clients', f.customerCount],
-    ['Notes', f.notes],
-  ];
-  const present = rows.filter((row): row is [string, string] => Boolean(row[1]));
-
+  const email = clean(notice.email);
+  const lines =
+    notice.mode === 'open'
+      ? [
+          `New sign-up: ${email} asked for a sign-up link and was sent one.`,
+          'They are on the allowlist now. Nothing for you to do; this is for your information.',
+        ]
+      : [
+          `${email} asked for a sign-up link. Sign-ups are in review mode, so nothing was sent.`,
+          'To let them in, add this address to the allowlist in the owner console.',
+        ];
   await resendPost(env, env.RESEND_FROM_NOREPLY!, {
     to: owners,
-    reply_to: f.email,
-    subject: `Invite request: ${f.business} (${f.city})`,
-    text: present.map(([label, value]) => `${label}: ${value}`).join('\n'),
+    reply_to: email,
+    subject: notice.mode === 'open' ? `New sign-up: ${email}` : `Sign-up to review: ${email}`,
+    text: lines.join('\n\n'),
     html: emailShell(
-      present
-        .map(
-          ([label, value]) =>
-            `<p style="margin:0 0 8px;"><strong>${htmlEscape(label)}:</strong> ${htmlEscape(value)}</p>`,
-        )
-        .join(''),
-      'Sent by the Pawservation invite-request form',
+      lines.map((line) => `<p style="margin:0 0 8px;">${htmlEscape(line)}</p>`).join(''),
+      'Sent by the Pawservation sign-up page',
     ),
   });
 }
