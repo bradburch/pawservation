@@ -123,6 +123,7 @@ export function buildProductLlmsTxt(origin: string): string {
 
 - Overview: ${origin}/
 - Full tour of every feature: ${origin}/how-it-works
+- Step-by-step setup guide for a new sitter: ${origin}/getting-started
 - Live demo, no sign-up (a made-up sitter's account): ${origin}/demo
 - Privacy: ${origin}/privacy
 - Terms: ${origin}/terms

@@ -86,7 +86,15 @@ describe('SEO surface', () => {
     // Every page pageHead builds, not the four that existed when it was written: /about and
     // /contact are the two an agent vetting this product reads, so an empty box on their unfurl
     // is the worst place to have one.
-    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact']) {
+    for (const path of [
+      '/',
+      '/how-it-works',
+      '/privacy',
+      '/terms',
+      '/about',
+      '/contact',
+      '/getting-started',
+    ]) {
       const body = await (await app.request(path, {}, env)).text();
       // The pair has to agree. `summary_large_image` crops to roughly 1.91:1, and the only
       // candidate image this repo owns is a 932x1990 portrait screenshot — declaring it would
@@ -353,7 +361,7 @@ describe('SEO surface', () => {
     const contact = await (await app.request('/contact', {}, env)).text();
     expect(contact).toContain(org.email);
     // One entity, one page. Repeating the graph on /privacy would give a crawler four candidates.
-    for (const path of ['/how-it-works', '/privacy', '/terms']) {
+    for (const path of ['/how-it-works', '/privacy', '/terms', '/getting-started']) {
       expect(await (await app.request(path, {}, env)).text(), path).not.toContain('ld+json');
     }
   });
@@ -463,7 +471,14 @@ describe('SEO surface', () => {
     // The scoping proof. Every selector above needs `.hero-flush` or `.founder` in the markup,
     // and only /about has either, so the rules are unreachable from the other five pages even
     // though the stylesheet is inlined into all of them.
-    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/contact']) {
+    for (const path of [
+      '/',
+      '/how-it-works',
+      '/privacy',
+      '/terms',
+      '/contact',
+      '/getting-started',
+    ]) {
       const body = await (await app.request(path, {}, env)).text();
       const markup = body.replace(/<style>[\s\S]*?<\/style>/g, '');
       const classes = new Set(
@@ -558,6 +573,7 @@ describe('SEO surface', () => {
       '/contact',
       '/privacy',
       '/terms',
+      '/getting-started',
       '/request-invite/thanks',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
@@ -628,7 +644,15 @@ describe('SEO surface', () => {
 
   it('links every page to the trust anchors through one shared footer', async () => {
     const { env } = createTestEnv();
-    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact']) {
+    for (const path of [
+      '/',
+      '/how-it-works',
+      '/privacy',
+      '/terms',
+      '/about',
+      '/contact',
+      '/getting-started',
+    ]) {
       const body = await (await app.request(path, {}, env)).text();
       expect(body, path).toContain('href="/about"');
       expect(body, path).toContain('href="/contact"');
@@ -663,7 +687,15 @@ describe('SEO surface', () => {
     // same reason: a browser renders `&#8212;` as the identical glyph.
     const EM_DASH = /\u2014|&mdash;|&#8212;|&#x2014;/gi;
     const pages: { label: string; body: string }[] = [];
-    for (const path of ['/', '/how-it-works', '/privacy', '/terms', '/about', '/contact'])
+    for (const path of [
+      '/',
+      '/how-it-works',
+      '/privacy',
+      '/terms',
+      '/about',
+      '/contact',
+      '/getting-started',
+    ])
       pages.push({ label: path, body: await (await app.request(path, {}, env)).text() });
     // The two transactional pages render from server/routes/invite-request.ts rather than from
     // pageHead, so they were outside this loop: the thanks page was spot-checked for `&mdash;`

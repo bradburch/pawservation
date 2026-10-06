@@ -1,6 +1,6 @@
 ---
 name: marketing-pages
-description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /how-it-works, /about, /contact, /privacy, /terms, /request-invite) — canonical URLs, robots/llms.txt, JSON-LD, CSP script-free rule, og-cards. Use when touching these pages or their SEO/agent-discoverability surface.
+description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /how-it-works, /getting-started, /about, /contact, /privacy, /terms, /request-invite) — canonical URLs, robots/llms.txt, JSON-LD, CSP script-free rule, og-cards. Use when touching these pages or their SEO/agent-discoverability surface.
 ---
 
 # Marketing pages, SEO and agent-discoverability
@@ -33,6 +33,15 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   hears the answer. The calls to action read "Sign up" on the same instruction, and stay truthful
   only beside the sentence that a person emails the sign-up link: signup is allowlist-only and the
   form posts to `/request-invite`.
+
+## `/getting-started`, the sitter's setup guide
+
+A seventh `pageHead` page, on the `/contact` skeleton (bare `.nav-right`, `.legal` prose, one `h2`
+per `.feature`), so it adds no CSS. It walks a new sitter from the sign-up email to booking by
+WhatsApp using the dashboard's own labels, and `getting-started.test.ts` pins the labels she will
+look for, so a dashboard rename fails a test rather than stranding her. Its Pro sections name a
+dashboard place, never a path on the paid origin: the cross-repo contract budget is full. It is in
+the sitemap, `run_worker_first`, the product `llms.txt` and the shared footer ("Setup guide").
 
 ## `pageHead` and the canonical
 

@@ -79,9 +79,50 @@ describe('GET /how-it-works — the tour page', () => {
     const body = await howItWorksBody();
     // The owner's brief, pinned as three claims rather than as three headings, so the copy can be
     // rewritten again without the page quietly losing what it is about.
-    expect(body).toContain('Your clients request on your website');
+    // 2026-10-05: the pin on "Your clients request on your website" was NARROWED, not dropped. The
+    // owner's positioning (landing page, PR #190) has clients booking in three places, and a
+    // heading that names the website alone tells a sitter with no website this is not for her.
+    // The request claim now rides on the three paths, each pinned by the test below.
+    expect(body).toContain('Your clients book wherever they find you');
     expect(body).toContain('You confirm or decline');
     expect(body).toMatch(/Block a day, or a run of days/);
+  });
+
+  it('leads with time back and the relationship, the landing page positioning', async () => {
+    const body = await howItWorksBody();
+    // The hero is the one place a reader decides whether to keep going, so the two things the
+    // owner sells first are pinned there and not merely somewhere on the page.
+    const hero = body.slice(body.indexOf('<section class="hero">'), body.indexOf('id="booking"'));
+    expect(hero).toContain('without waiting on you');
+    expect(hero).toContain('the relationship stays yours');
+    // Every booking path the landing page sells, in the hero and again as its own card.
+    expect(hero).toContain('on your own website');
+    expect(hero).toContain('from a link you send them');
+    expect(hero).toContain('messaging your WhatsApp number');
+    for (const path of ['On your own website', 'From a link you send', 'By WhatsApp, on Pro'])
+      expect(body, path).toContain(`<h3>${path}</h3>`);
+    // The link is a first-class path, not a fallback: no website is required at all.
+    expect(body).toContain('You don&rsquo;t need a website');
+  });
+
+  it('places Pro’s assistant, WhatsApp and card payments, and claims only what they do', async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('id="pro"');
+    // The assistant answers routine questions and never books: a request it takes still waits for
+    // her tap, the same rule "Nothing books itself." states for every other path.
+    expect(body).toContain('a friendly assistant');
+    expect(body).toContain('WhatsApp alert with Confirm and Decline buttons');
+    // Card payments are a card in that section, not the headline. The Stripe arrangement is still
+    // stated ONCE (the Services aside, pinned above), so this card names the fee terms only.
+    expect(body).toContain('Stripe&rsquo;s published rate and no fee to Pawservation');
+    // The hero sells the relationship, not the card reader.
+    const hero = body.slice(body.indexOf('<section class="hero">'), body.indexOf('id="booking"'));
+    expect(hero).not.toMatch(/Stripe|card payment/i);
+  });
+
+  it('links the step-by-step setup guide', async () => {
+    const body = await howItWorksBody();
+    expect(body).toContain('href="/getting-started"');
   });
 
   it('states the confirm-first promise, and that the client hears about it from us', async () => {
