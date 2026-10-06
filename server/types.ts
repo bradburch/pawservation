@@ -507,6 +507,11 @@ export type AppEnv = {
      *  is recorded here rather than tidied because a rule with one unnamed exception reads as a rule
      *  nobody follows. */
     adminCredential: 'password' | 'token';
+    /** Set by `marketingHtml` (`server/lib/web-analytics.ts`) on exactly the responses that carry
+     *  the Cloudflare Web Analytics beacon; the header middleware in `server/index.ts` admits the
+     *  beacon's two hosts in the CSP only when it is set, so the tag and its allowance cannot
+     *  drift apart. */
+    webAnalytics: boolean;
     /** Set by adminAuth ONLY on the tenant-access-token branch: `TenantAccessTokens.Id` of the
      *  credential that was presented; unset for a password session. Read by exactly one route —
      *  the DELETE that lets a token revoke ITSELF (`routes/tenant-tokens.ts`), which is

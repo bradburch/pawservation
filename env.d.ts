@@ -64,6 +64,16 @@ interface Env {
    */
   PREMIUM_ORIGIN?: string;
   /**
+   * Cloudflare Web Analytics site token (32 hex characters, from the dashboard's Web Analytics
+   * "manual setup / JS snippet" mode). When set and well-formed, the PUBLIC marketing pages carry
+   * the cookieless beacon and their CSP admits its two hosts (`server/lib/web-analytics.ts`); unset
+   * or malformed renders nothing, so local dev, tests and forks stay script-free. Never rendered on
+   * the widget, the dashboard, the demo or any signed-in page. Not a secret — it is published in
+   * the page — but set it with `wrangler secret put CF_WEB_ANALYTICS_TOKEN` so it survives deploys
+   * without landing in `wrangler.jsonc`, where `wrangler dev` would beacon local page views too.
+   */
+  CF_WEB_ANALYTICS_TOKEN?: string;
+  /**
    * IS SELLING SWITCHED ON? A plain deployment var, published on `GET /api/:slug/config` as
    * `pricing.subscribe`, and the only thing that puts a Subscribe control in a sitter's dashboard
    * (`app/admin/PlanPanel.tsx`). Exactly `'true'` (trimmed, case-insensitive) is on; UNSET — the

@@ -1,3 +1,4 @@
+import { attributionInputs, type Attribution } from './attribution';
 import { htmlEscape } from './email';
 import { SIGNUP_ACTION, TURNSTILE_SCRIPT_ORIGIN } from './turnstile';
 
@@ -10,9 +11,18 @@ import { SIGNUP_ACTION, TURNSTILE_SCRIPT_ORIGIN } from './turnstile';
  * The widget is Turnstile's IMPLICIT render: its script finds the `.cf-turnstile` div and adds a
  * hidden `cf-turnstile-response` input to this form, so a native form POST carries the token and
  * the page needs no script of its own. The honeypot is named "fax" (the old invite form's name).
+ *
+ * Where the visitor came from (`server/lib/attribution.ts`) rides as hidden fields, rendered only
+ * when present and only from ALREADY-CLEANED values, so it survives the landing → /signup → widget
+ * → submit hops and reaches the owner's notice.
  */
 export function renderSignupForm(
-  opts: { email?: string; siteKey?: string; submitLabel?: string } = {},
+  opts: {
+    email?: string;
+    siteKey?: string;
+    submitLabel?: string;
+    attribution?: Attribution;
+  } = {},
 ): string {
   const widget = opts.siteKey
     ? `
@@ -20,7 +30,7 @@ export function renderSignupForm(
                 <div class="cf-turnstile" data-sitekey="${htmlEscape(opts.siteKey)}" data-action="${SIGNUP_ACTION}" data-theme="dark"></div>
               </div>`
     : '';
-  return `<form class="signup-form" method="post" action="/signup">
+  return `<form class="signup-form" method="post" action="/signup">${attributionInputs(opts.attribution, htmlEscape)}
               <div class="signup-field signup-field-wide">
                 <label for="signup-email">Your email</label>
                 <input id="signup-email" name="email" type="email" maxlength="254" required autocomplete="email" value="${htmlEscape(opts.email ?? '')}" />
