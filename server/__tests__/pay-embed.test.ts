@@ -83,12 +83,14 @@ describe('the bookings view mounts the paid surface by path template, like the a
     );
   });
 
-  it('starts at zero height and unmounts on error, so a page that never loads takes no space', () => {
+  it('starts at zero height and carries no onError, so a page that never loads takes no space', () => {
     // The audit card starts at 240px because the dashboard is its own page. This one sits inside a
     // widget that is itself an auto-resizing iframe on a host page: a default height would be
     // blank space on every widget whose paid surface is down.
     expect(FLAT).toContain('useState(0)');
-    expect(FLAT).toContain('onError={() => setFailed(true)}');
+    // HTML fires no `error` on an iframe and React wires only `load`, so a handler is dead code.
+    expect(FLAT).not.toContain('onError');
+    expect(FLAT).not.toContain('setFailed');
   });
 
   it('is rendered by the bookings view once signed in, on the list and on the empty state', () => {
