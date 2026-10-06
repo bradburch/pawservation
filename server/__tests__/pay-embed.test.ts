@@ -56,7 +56,7 @@ describe('the bookings view mounts the paid surface by path template, like the a
     expect(MINE).not.toContain('premium?.mcp');
     // The early exit on a missing origin precedes the markup, so no origin means no element and no
     // space — not an iframe with an empty `src`.
-    const exitAt = FLAT.indexOf('if (!origin || failed) return null;');
+    const exitAt = FLAT.indexOf('if (!origin) return null;');
     const frameAt = FLAT.indexOf('<iframe');
     expect(exitAt).toBeGreaterThan(-1);
     expect(frameAt).toBeGreaterThan(exitAt);
