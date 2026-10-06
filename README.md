@@ -257,9 +257,9 @@ npx wrangler secret put BILLING_SHARED_SECRET      # guards POST /api/:slug/admi
 # It is published on /config as premium.origin for clients that cannot resolve relative paths (*.workers.dev embeds).
 # PLAN_SUBSCRIBE is a plain var too, and is set to "true" in production: unset means the dashboard
 # offers no Subscribe control. See "Plans and billing" below.
-# PLAN_ENFORCE is the same shape and is deliberately NOT set: unset means a business holding no
-# current plan still has a writable dashboard. Set it to exactly "true" only after the pre-flip check
-# in "Plans and billing" returns zero rows. Both are `vars` entries in wrangler.jsonc — a STRING, never
+# PLAN_ENFORCE is the same shape and is set to "true" in production: unset means a business holding no
+# current plan still has a writable dashboard. It was set only after the pre-flip check
+# in "Plans and billing" returned zero rows. Both are `vars` entries in wrangler.jsonc — a STRING, never
 # a JSON boolean — so the flip and the unflip are each a deploy, and a value set in the dashboard is
 # overwritten by the next deploy unless that deploy passes `--keep-vars`. Use the file.
 # Optional — Google Calendar sync:
@@ -411,7 +411,7 @@ that window is closed by the callback's own guard. What remains is ordering, not
 every business on the server and the second would send her to buy a plan for a control that will
 503 the moment she has one.
 
-**It ships dark, and that is not caution for its own sake.** `PLAN_ENFORCE` (unset = off, exactly
+**It shipped dark, and is now on in production.** `PLAN_ENFORCE` (unset = off, exactly
 `"true"` = on, read with `typeof === 'string'` so a JSON boolean is off rather than a TypeError on
 every request) is what the gate reads. It is a `vars` entry in `wrangler.jsonc`, so the flip and
 the unflip are each a deploy — a value set in the dashboard is overwritten by the next deploy
@@ -441,7 +441,7 @@ npx wrangler d1 execute pawservation-db --remote --command \
 **Expect zero rows before flipping.** If it returns any, comp them or do not flip. The demo
 tenants show up in it like any other row — they hold no grant either — so comp them too, or accept
 that the demo dashboards go read-only. The same command is the rollback diagnosis, and the rollback
-itself is one line — unset `PLAN_ENFORCE`. No data is written by the flip and none is undone by the
+itself is one line — remove `PLAN_ENFORCE` from `wrangler.jsonc` and redeploy. No data is written by the flip and none is undone by the
 unflip. `server/__tests__/plan-preflip-sql.test.ts` reads this exact statement out of this file and
 runs it over every combination of the three dated columns, asserting it agrees with `isPlanCurrent`
 row for row — so editing the SQL here, or the predicate there, is caught by the suite. **That
