@@ -324,6 +324,14 @@ export function PlanPanel({
     settings.compedUntil !== ''
       ? formatTimestamp(settings.compedUntil)
       : null;
+  /**
+   * ONE FREE TRIAL PER SITTER. The paid surface's checkout caps a subscription's trial at the
+   * signup comp (and charges at once when under two days remain), so the Subscribe copy must not
+   * promise a fresh trial: `trialUntil` (above) is a live comp, and a comp date with no live trial
+   * means she has had hers. A comp date at all is the only signal; no clock is read here.
+   */
+  const trialUsed =
+    trialUntil === null && typeof settings.compedUntil === 'string' && settings.compedUntil !== '';
   const planName =
     settings.plan === 'solo' || settings.plan === 'pro'
       ? PLAN_NAMES[settings.plan]
@@ -548,13 +556,17 @@ export function PlanPanel({
     <>
       <h3>
         Your plan
-        {/* The Hint is SUBSCRIBE'S OWN COPY — it promises a free trial that starts when she
-            subscribes — so it hides on the same condition as the offers grid below, and not on the
+        {/* The Hint is SUBSCRIBE'S OWN COPY — what subscribing does to her trial (one per sitter,
+            see `trialUsed`) — so it hides on the same condition as the offers grid below, and not on the
             offers condition alone, which left it standing beside the Manage plan button. */}
         {!offersHidden && !settings.planActive && pricing && (
           <Hint label="Your plan">
-            Payment is handled by Stripe on their own page — we never see your card. Your{' '}
-            {pricing.trialDays}-day free trial starts when you subscribe.
+            Payment is handled by Stripe on their own page — we never see your card.{' '}
+            {trialUntil !== null
+              ? `Subscribing doesn't add to your free trial: your plan switches on now and is first charged on ${trialUntil}, or today if your trial ends within two days.`
+              : trialUsed
+                ? "You've had your free trial, so your plan is charged when you subscribe."
+                : `Your ${pricing.trialDays}-day free trial starts when you subscribe.`}
           </Hint>
         )}
       </h3>
@@ -601,9 +613,13 @@ export function PlanPanel({
             ))}
           </ul>
           <p className="pb-hint">
-            Every plan starts with a {pricing.trialDays}-day free trial. Nothing about your
-            bookings, clients or pets changes when you subscribe — a plan only decides which extras
-            are switched on.
+            {trialUntil !== null
+              ? `Choosing a plan now doesn't add free time: it switches on today and is first charged when your free trial ends on ${trialUntil}.`
+              : trialUsed
+                ? "You've had your free trial, so a plan is charged when you subscribe."
+                : `Every plan starts with a ${pricing.trialDays}-day free trial.`}{' '}
+            Nothing about your bookings, clients or pets changes when you subscribe — a plan only
+            decides which extras are switched on.
           </p>
         </>
       )}
