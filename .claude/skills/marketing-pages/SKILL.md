@@ -51,8 +51,8 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   measure" section lists the pages by name, so it changes in the same commit.
 - **A sign-up carries where it came from.** `GET /` and `GET /getting-started` read `utm_source`,
   `utm_campaign` and the Referer's ORIGIN (`server/lib/attribution.ts`) and append them to their
-  `href="/signup"` links (`withSignupAttribution` in `server/index.ts`)
-  (the referrer as `ref_origin`); `GET /signup` reads the same from its query, or from its own
+  `href="/signup"` links (`withSignupAttribution` in `server/index.ts`, the referrer as
+  `ref_origin`); `GET /signup` reads the same from its query, or from its own
   Referer on a direct arrival, into hidden fields on the form; every `POST /signup` re-render keeps
   them, cleaned again at each hop, and the owner's `sendSignupNotice` states them. Malformed values
   are dropped, never a 400; never logged, never stored. The other pages' Sign up links do not carry
