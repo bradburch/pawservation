@@ -461,7 +461,6 @@ const MAX_CHARGE_LABEL = 60;
 /** Venmo's own handle limit. Capped here so a hostile PATCH can't park a novel on a client row. */
 const MAX_VENMO_USERNAME = 30;
 
-/** null/undefined (use default) or a timezone Intl accepts. */
 /** Parses the status route's optional `expected` precondition; null when malformed. */
 function parseExpectedBooking(v: unknown): ExpectedBooking | null {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
@@ -478,6 +477,7 @@ function parseExpectedBooking(v: unknown): ExpectedBooking | null {
   return { startDate, endDate, petCount, estCostCents };
 }
 
+/** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
   if (value === null || value === undefined) return true;
   if (typeof value !== 'string') return false;
@@ -2858,9 +2858,10 @@ export const adminRoutes = new Hono<AppEnv>()
     );
     if (!updated) {
       // Zero rows changed. Without a precondition that is the existing 404. With one, it may be
-      // the precondition: a live, answerable row that no longer looks like the card means the
-      // booking changed under her. A row that still matches failed the status guard instead (it is
-      // already answered), which stays the 404 it always was.
+      // the precondition: a real booking of hers that no longer looks like the card means it changed
+      // under her — whatever its status, since the card is stale either way and "refresh" is the
+      // right answer. A row that still matches failed the status guard instead (it is already
+      // answered), which stays the 404 it always was; so do unknown ids and blocked/external rows.
       if (expected) {
         const cur = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, id);
         if (

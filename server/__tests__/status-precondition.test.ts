@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import app from '../index';
 import { adminHeaders, createTestEnv, endUserToken, TENANT_A } from './helpers';
+import { addDays, getPacificDateStr } from '../../src/shared/index.js';
 
 /**
  * A sitter answering from a stale card. The dashboard shows a booking as it was when the page
@@ -110,6 +111,76 @@ describe('booking status precondition (expected)', () => {
         expect(rowOf(raw, id)).toEqual(before);
       });
     }
+  }
+
+  // The assessed-cancellation UPDATE is its own statement with the fee bound FIRST: it needs a stay
+  // inside a tier window (a far-future stay computes a $0 fee and takes the plain cancel branch).
+  const bookSoon = async (env: Env): Promise<string> => {
+    const token = await endUserToken(env, 'sunny-paws', 'jess@example.com');
+    const res = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          type: 'boarding',
+          startDate: addDays(getPacificDateStr(), 1),
+          endDate: addDays(getPacificDateStr(), 3),
+          petIds: ['pet_sp_bella'],
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { id: string }).id;
+  };
+  const seedTiers = (raw: DatabaseSync): void => {
+    raw.exec(
+      `UPDATE TenantServices SET CancellationTiers = '[{"withinDays":7,"percent":100}]'
+       WHERE TenantId = '${TENANT_A}' AND ServiceType = 'boarding'`,
+    );
+  };
+  const feeOf = (raw: DatabaseSync, id: string): number | null =>
+    (
+      raw.prepare('SELECT CancellationFee FROM BookingRequests WHERE Id = ?').get(id) as {
+        CancellationFee: number | null;
+      }
+    ).CancellationFee;
+
+  it('cancel with a fee: a matching expected cancels and records the fee', async () => {
+    const { env, raw } = createTestEnv();
+    seedTiers(raw);
+    const id = await bookSoon(env);
+    raw.exec(`UPDATE BookingRequests SET Status='confirmed' WHERE Id='${id}'`);
+    const before = rowOf(raw, id);
+    const res = await post(env, id, {
+      status: 'cancelled',
+      chargeFee: true,
+      expected: expectedOf(before),
+    });
+    expect(res.status).toBe(200);
+    expect(rowOf(raw, id).Status).toBe('cancelled');
+    expect(feeOf(raw, id)).toBe(before.EstCost);
+  });
+
+  for (const [field, mutate] of mutations) {
+    it(`cancel with a fee: a differing ${field} is 409 booking_changed and no fee is recorded`, async () => {
+      const { env, raw } = createTestEnv();
+      seedTiers(raw);
+      const id = await bookSoon(env);
+      raw.exec(`UPDATE BookingRequests SET Status='confirmed' WHERE Id='${id}'`);
+      const before = rowOf(raw, id);
+      expect(before.EstCost).not.toBeNull();
+      const res = await post(env, id, {
+        status: 'cancelled',
+        chargeFee: true,
+        expected: mutate(expectedOf(before)),
+      });
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { code: string }).code).toBe('booking_changed');
+      expect(rowOf(raw, id)).toEqual(before);
+      expect(feeOf(raw, id)).toBeNull();
+    });
   }
 
   it('a stale expected on a row whose estimate and end date are NULL still matches via IS', async () => {
