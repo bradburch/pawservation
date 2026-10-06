@@ -1,12 +1,13 @@
 ---
 title: Pawservation
-description: Open-source, embeddable multi-tenant booking widget for pet-sitting businesses
+description: Booking software for a solo pet sitter or dog walker with a regular book of clients, which answers the routine questions so she can spend her time on the pets
 ---
 
 # Pawservation
 
-**An embeddable booking widget for pet-sitting and boarding businesses — drop a live
-calendar into any website with one `<script>` tag.**
+**Booking software for a solo pet sitter or dog walker with ten to twenty regular clients.
+Clients see open days and prices, book, reschedule and cancel on their own, on the sitter's
+website or from a link she sends them, and she confirms every booking.**
 
 Pawservation is a full-stack, production-shaped side project: a multi-tenant SaaS booking
 platform built on the Cloudflare edge (Workers, D1, KV), with a React embed widget, a
