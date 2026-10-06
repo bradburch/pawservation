@@ -20,6 +20,7 @@ import {
   normalizePremiumUntil,
 } from '../lib/premium';
 import { serializeAnalytics } from '../lib/analytics';
+import { tenantToday } from '../lib/tenant-today';
 import { ownerAuth } from '../lib/middleware';
 import { isOwnerEmail } from '../lib/owners';
 import { INVITE_LINK_TTL_SECONDS, mintLink } from '../lib/signup-link';
@@ -215,7 +216,7 @@ export const ownerRoutes = new Hono<AppEnv>()
     if (!tenant) return c.json({ error: 'Not found.' }, 404);
     // Window is a roster control only — the detail always shows getAnalytics' own fixed
     // 12-month breakdown, anchored to the sitter's own timezone.
-    const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+    const today = tenantToday(tenant);
     const data = await getAnalytics(c.env.PAWSERVATION_DB, tenantId, today);
     // `premiumUntil` and `compedUntil` ride along beside `disabled` for the same reason it does:
     // the console's three owner switches each need to render their CURRENT value. This is one of

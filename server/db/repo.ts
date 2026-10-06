@@ -25,6 +25,7 @@ import type {
 } from '../types';
 import { EXTRA_TIME_ORIGINS } from '../types';
 import { isPlanCurrent } from '../lib/premium';
+import type { SkipReason } from '../lib/series-rule';
 import type { CapacityKind, RateUnit, ServiceShape, ServiceType } from '../lib/services';
 import type { PaymentMethod, PetRateMode } from '../lib/validation';
 import type { Account, CalendarCostBasis, ServiceQuestion } from '../../src/shared/index.js';
@@ -626,6 +627,12 @@ export async function countSlotBookings(
  * `excludeId` mirrors `countSlotBookings`': a customer repainting the grid while EDITING a
  * booking must not see their own row occupying the slot they already hold, or a stay they are
  * merely re-timing reads as full.
+ *
+ * `scope` is `countSlotBookings`' (see `OccupancyScope`). `excludeSeriesId` leaves out every walk
+ * of ONE series, in SQL — the series engine's "do my walks still fit, ignoring my own?" — and
+ * never a subtraction after the fact, which would have to guess how many pets the excluded row
+ * carried. A single booking (SeriesId NULL) always counts: `NULL != ?` is not true, so the test
+ * spells out `SeriesId IS NULL` rather than let a single booking fall out of the count.
  */
 export async function listSlotBookingCounts(
   db: D1Database,
@@ -635,13 +642,16 @@ export async function listSlotBookingCounts(
   fromDate: string,
   toDateExclusive: string,
   excludeId?: string,
+  scope: OccupancyScope = 'all-live',
+  excludeSeriesId?: string,
 ): Promise<Map<string, number>> {
   const { results } = await db
     .prepare(
       `SELECT StartDate, COALESCE(SUM(PetCount), 0) AS n FROM BookingRequests
        WHERE TenantId = ? AND ServiceType = ? AND OptionKey = ?
-         AND StartDate >= ? AND StartDate < ? AND Status IN ('pending', 'confirmed')
+         AND StartDate >= ? AND StartDate < ? AND ${statusFilterSql(scope)}
          AND (? IS NULL OR Id != ?)
+         AND (? IS NULL OR SeriesId IS NULL OR SeriesId != ?)
        GROUP BY StartDate`,
     )
     .bind(
@@ -652,6 +662,8 @@ export async function listSlotBookingCounts(
       toDateExclusive,
       excludeId ?? null,
       excludeId ?? null,
+      excludeSeriesId ?? null,
+      excludeSeriesId ?? null,
     )
     .all<{ StartDate: string; n: number }>();
   return new Map(results.map((r) => [r.StartDate, r.n]));
@@ -661,8 +673,8 @@ export async function listSlotBookingCounts(
  * success. 'blocked' rows sync as an all-day UNAVAILABLE event the same way a real booking syncs
  * as its own event; only 'external' (Google-owned, materialized by reconcile) is never written
  * here at all. The one exception is a series walk (`seriesId` set): it is inserted with
- * `syncPending: 0`, because a row with a series never carries its own calendar event — the
- * series' event does. */
+ * `SyncPending = 0`, derived from `seriesId` rather than passed, because a row with a series never
+ * carries its own calendar event — the series' event does — and a separate flag could disagree. */
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -684,9 +696,6 @@ export async function insertBookingRequest(
     idempotencyKey?: string | null;
     /** The series this walk belongs to (0019_booking_series); undefined/null = a single booking. */
     seriesId?: string | null;
-    /** 1 (the default) arms the calendar outbox for this row; a series walk passes 0, because
-     *  the series' own calendar event already carries it. */
-    syncPending?: 0 | 1;
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
@@ -712,7 +721,7 @@ export async function insertBookingRequest(
       row.status,
       row.source ?? null,
       row.idempotencyKey ?? null,
-      row.syncPending ?? 1,
+      row.seriesId ? 0 : 1,
       row.seriesId ?? null,
     )
     .run();
@@ -1232,6 +1241,377 @@ export async function armSeriesSync(
         WHERE TenantId = ? AND Id = ?`,
     )
     .bind(tenantId, seriesId)
+    .run();
+}
+
+// ─── Booking series (0019) ─────────────────────────────────────────────────────────────────────
+//
+// A series is its terms (BookingSeries + BookingSeriesPets); each walk inside the window is an
+// ordinary BookingRequests row carrying SeriesId; a week that was not booked is a BookingSeriesSkips
+// row with its reason. The builders below return STATEMENTS, never run them: a series and its
+// walks are written in one `db.batch` (`runSeriesBatch`), all or nothing. Every statement is
+// tenant-scoped, and every child insert proves its parent belongs to the tenant in SQL.
+
+export type SeriesStatus =
+  'pending' | 'pending_client' | 'active' | 'ended' | 'declined' | 'expired';
+export type SeriesRow = {
+  Id: string;
+  TenantId: string;
+  EndUserId: string;
+  ServiceType: string;
+  OptionKey: string | null;
+  Weekdays: number;
+  StartTime: string | null;
+  StartDate: string;
+  EndDate: string | null;
+  Status: SeriesStatus;
+  CreatedBy: 'client' | 'sitter';
+  OfferExpiresAt: string | null;
+  MaterializedThrough: string | null;
+  Version: number;
+  GCalEventId: string | null;
+  SyncPending: number;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+export type SeriesSkipRow = { SeriesId: string; Date: string; Reason: SkipReason };
+export type NewSeries = Omit<
+  SeriesRow,
+  'Version' | 'GCalEventId' | 'SyncPending' | 'MaterializedThrough' | 'CreatedAt' | 'UpdatedAt'
+> & { IdempotencyKey: string | null };
+export type NewSeriesRow = {
+  id: string;
+  endUserId: string;
+  serviceType: string;
+  date: string;
+  optionKey: string | null;
+  petIds: string[];
+  startTime: string | null;
+  estCostCents: number;
+  status: 'pending' | 'confirmed' | 'cancelled';
+  cancellationFeeCents?: number;
+};
+
+const SERIES_COLS =
+  'Id, TenantId, EndUserId, ServiceType, OptionKey, Weekdays, StartTime, StartDate, EndDate, Status, CreatedBy, OfferExpiresAt, MaterializedThrough, Version, GCalEventId, SyncPending, CreatedAt, UpdatedAt';
+
+export function insertSeriesStatement(
+  db: D1Database,
+  tenantId: string,
+  s: NewSeries,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO BookingSeries
+         (Id, TenantId, EndUserId, ServiceType, OptionKey, Weekdays, StartTime, StartDate, EndDate,
+          Status, CreatedBy, OfferExpiresAt, IdempotencyKey, CreatedAt, UpdatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+    )
+    .bind(
+      s.Id,
+      tenantId,
+      s.EndUserId,
+      s.ServiceType,
+      s.OptionKey,
+      s.Weekdays,
+      s.StartTime,
+      s.StartDate,
+      s.EndDate,
+      s.Status,
+      s.CreatedBy,
+      s.OfferExpiresAt,
+      s.IdempotencyKey,
+    );
+}
+
+/** One edge per pet, each proving in SQL that the series AND the pet are this tenant's. */
+export function insertSeriesPetStatements(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  petIds: string[],
+): D1PreparedStatement[] {
+  return petIds.map((petId) =>
+    db
+      .prepare(
+        `INSERT INTO BookingSeriesPets (SeriesId, PetId)
+         SELECT ?, ?
+         WHERE EXISTS (SELECT 1 FROM BookingSeries WHERE Id = ? AND TenantId = ?)
+           AND EXISTS (SELECT 1 FROM EndUserPets WHERE Id = ? AND TenantId = ?)`,
+      )
+      .bind(seriesId, petId, seriesId, tenantId, petId, tenantId),
+  );
+}
+
+/**
+ * One walk of a series: the booking row and its pet edges. The same columns `insertBookingRequest`
+ * writes, with the id supplied (so the caller can name the row it is about to create) and
+ * `SyncPending = 0`, because a walk never carries its own calendar event — the series' does.
+ */
+export function insertSeriesRowStatements(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  row: NewSeriesRow,
+): D1PreparedStatement[] {
+  const petIds = [...new Set(row.petIds)];
+  return [
+    db
+      .prepare(
+        `INSERT INTO BookingRequests
+           (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime,
+            EstCost, CancellationFee, Answers, Status, Source, IdempotencyKey, SyncPending, SeriesId)
+         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, '{}', ?, NULL, NULL, 0, ?)`,
+      )
+      .bind(
+        row.id,
+        tenantId,
+        row.endUserId,
+        row.serviceType,
+        row.date,
+        row.optionKey,
+        Math.max(petIds.length, 1),
+        row.startTime,
+        row.estCostCents,
+        row.cancellationFeeCents ?? null,
+        row.status,
+        seriesId,
+      ),
+    ...petIds.map((petId) =>
+      db
+        .prepare(
+          `INSERT INTO BookingRequestPets (BookingRequestId, PetId)
+           SELECT ?, ?
+           WHERE EXISTS (SELECT 1 FROM BookingRequests WHERE Id = ? AND TenantId = ?)
+             AND EXISTS (SELECT 1 FROM EndUserPets WHERE Id = ? AND TenantId = ?)`,
+        )
+        .bind(row.id, petId, row.id, tenantId, petId, tenantId),
+    ),
+  ];
+}
+
+/** A week not booked, and why. INSERT OR IGNORE: the first reason recorded for a date stands. */
+export function insertSeriesSkipStatement(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  date: string,
+  reason: SkipReason,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT OR IGNORE INTO BookingSeriesSkips (SeriesId, TenantId, Date, Reason, CreatedAt)
+       SELECT ?, ?, ?, ?, datetime('now')
+       WHERE EXISTS (SELECT 1 FROM BookingSeries WHERE Id = ? AND TenantId = ?)`,
+    )
+    .bind(seriesId, tenantId, date, reason, seriesId, tenantId);
+}
+
+/**
+ * Advance the series' "walks are rows up to here" mark. Never moves it backwards (a pass over a
+ * shorter span must not un-claim weeks a longer one already wrote). `armSync` re-arms the series'
+ * calendar event when the pass wrote anything.
+ */
+export function setMaterializedThroughStatement(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  through: string,
+  armSync: boolean,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE BookingSeries
+          SET MaterializedThrough = CASE WHEN MaterializedThrough IS NULL OR MaterializedThrough < ?
+                                         THEN ? ELSE MaterializedThrough END,
+              SyncPending = CASE WHEN ? = 1 THEN 1 ELSE SyncPending END,
+              UpdatedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ?`,
+    )
+    .bind(through, through, armSync ? 1 : 0, tenantId, seriesId);
+}
+
+/**
+ * Delete booking rows by id, pet edges first (`BookingRequestPets` has no ON DELETE CASCADE). Both
+ * statements are scoped through the tenant, so an id from another tenant deletes nothing.
+ */
+export function deleteBookingRequestsStatements(
+  db: D1Database,
+  tenantId: string,
+  ids: string[],
+): D1PreparedStatement[] {
+  if (ids.length === 0) return [];
+  const marks = ids.map(() => '?').join(', ');
+  return [
+    db
+      .prepare(
+        `DELETE FROM BookingRequestPets
+          WHERE BookingRequestId IN (SELECT Id FROM BookingRequests WHERE TenantId = ? AND Id IN (${marks}))`,
+      )
+      .bind(tenantId, ...ids),
+    db
+      .prepare(`DELETE FROM BookingRequests WHERE TenantId = ? AND Id IN (${marks})`)
+      .bind(tenantId, ...ids),
+  ];
+}
+
+/** One `db.batch` — all or nothing. An empty list is a no-op. */
+export async function runSeriesBatch(
+  db: D1Database,
+  statements: D1PreparedStatement[],
+): Promise<void> {
+  if (statements.length === 0) return;
+  await db.batch(statements);
+}
+
+export async function getSeries(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<SeriesRow | null> {
+  return await db
+    .prepare(`SELECT ${SERIES_COLS} FROM BookingSeries WHERE TenantId = ? AND Id = ?`)
+    .bind(tenantId, id)
+    .first<SeriesRow>();
+}
+
+export async function getSeriesForUser(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  id: string,
+): Promise<SeriesRow | null> {
+  return await db
+    .prepare(
+      `SELECT ${SERIES_COLS} FROM BookingSeries WHERE TenantId = ? AND EndUserId = ? AND Id = ?`,
+    )
+    .bind(tenantId, endUserId, id)
+    .first<SeriesRow>();
+}
+
+export async function listSeriesForTenant(
+  db: D1Database,
+  tenantId: string,
+  statuses: SeriesStatus[],
+): Promise<SeriesRow[]> {
+  if (statuses.length === 0) return [];
+  const { results } = await db
+    .prepare(
+      `SELECT ${SERIES_COLS} FROM BookingSeries
+        WHERE TenantId = ? AND Status IN (${statuses.map(() => '?').join(', ')})
+        ORDER BY StartDate, Id`,
+    )
+    .bind(tenantId, ...statuses)
+    .all<SeriesRow>();
+  return results;
+}
+
+export async function listSeriesForUser(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+): Promise<SeriesRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${SERIES_COLS} FROM BookingSeries WHERE TenantId = ? AND EndUserId = ?
+        ORDER BY StartDate, Id`,
+    )
+    .bind(tenantId, endUserId)
+    .all<SeriesRow>();
+  return results;
+}
+
+export async function listSeriesPetIds(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT bsp.PetId FROM BookingSeriesPets bsp
+         JOIN BookingSeries s ON s.Id = bsp.SeriesId
+        WHERE s.TenantId = ? AND bsp.SeriesId = ?
+        ORDER BY bsp.PetId`,
+    )
+    .bind(tenantId, seriesId)
+    .all<{ PetId: string }>();
+  return results.map((r) => r.PetId);
+}
+
+export async function listSeriesSkips(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<SeriesSkipRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT SeriesId, Date, Reason FROM BookingSeriesSkips
+        WHERE TenantId = ? AND SeriesId = ? ORDER BY Date`,
+    )
+    .bind(tenantId, seriesId)
+    .all<SeriesSkipRow>();
+  return results;
+}
+
+/** Every row of a series, in any status, by date. */
+export async function listSeriesBookingRows(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<(BookingRow & { SeriesId: string })[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${BOOKING_COLS} FROM BookingRequests
+        WHERE TenantId = ? AND SeriesId = ? ORDER BY StartDate`,
+    )
+    .bind(tenantId, seriesId)
+    .all<BookingRow & { SeriesId: string }>();
+  return results;
+}
+
+/**
+ * date → row id for every row of a series, in ANY status: a cancelled or declined walk still
+ * occupies its (SeriesId, StartDate) under the unique index, so it is a date that is not written
+ * again and not projected.
+ */
+export async function listSeriesBookingDates(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<Map<string, string>> {
+  const { results } = await db
+    .prepare(`SELECT Id, StartDate FROM BookingRequests WHERE TenantId = ? AND SeriesId = ?`)
+    .bind(tenantId, seriesId)
+    .all<{ Id: string; StartDate: string }>();
+  return new Map(results.map((r) => [r.StartDate, r.Id]));
+}
+
+export async function findSeriesByIdempotencyKey(
+  db: D1Database,
+  tenantId: string,
+  endUserId: string,
+  key: string,
+): Promise<SeriesRow | null> {
+  return await db
+    .prepare(
+      `SELECT ${SERIES_COLS} FROM BookingSeries
+        WHERE TenantId = ? AND EndUserId = ? AND IdempotencyKey = ?`,
+    )
+    .bind(tenantId, endUserId, key)
+    .first<SeriesRow>();
+}
+
+export async function bumpSeriesVersion(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE BookingSeries SET Version = Version + 1, UpdatedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ?`,
+    )
+    .bind(tenantId, id)
     .run();
 }
 

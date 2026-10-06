@@ -473,7 +473,6 @@ describe('admin data export route', () => {
       estCost: 2500,
       status: 'confirmed',
       seriesId: 'series_1',
-      syncPending: 0,
     });
 
     const rows = await rowsOf(await get(env, 'bookings'));

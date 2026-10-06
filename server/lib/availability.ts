@@ -705,6 +705,81 @@ async function singleConflictFor(
   return null;
 }
 
+/** Why one date of a series could not take its walk — `SingleConflict` with the blocked day split
+ *  by what blocks it. */
+export type WalkConflict = 'time_off' | 'external' | 'slot_full' | 'slot_no_room' | 'other';
+
+/**
+ * Why each date of a span could not take one more single-day booking, read ONCE for the span —
+ * the series engine's twin of `singleConflictFor`: the same two rules (a blocked day; the slot's
+ * `count + petCount > cap`), codes instead of sentences. A blocked day is split by what blocks it:
+ * a `blocked` row is her time off, an `external` row is a calendar event, and anything else the
+ * engine reports as blocked (a corrupt row) is `other` — matched, never defaulted to bookable.
+ *
+ * `excludeSeriesId` leaves that series' own walks out of the count, in SQL — "do my walks still
+ * fit, ignoring my own?" — and `scope` is `OccupancyScope`, so the sitter's confirm re-check can
+ * count only what she has committed to. Coverage uses the engine's own exclusive-end convention
+ * (`rowsToCapacityEvents` → `buildCapacity`): a row with no EndDate covers nothing.
+ */
+export async function walkConflictsForSpan(
+  env: Env,
+  tenant: Tenant,
+  service: TenantService,
+  option: TenantServiceOption,
+  dates: string[],
+  petCount: number,
+  excludeSeriesId: string | null,
+  scope: OccupancyScope = 'all-live',
+): Promise<Map<string, WalkConflict | null>> {
+  const out = new Map<string, WalkConflict | null>();
+  if (dates.length === 0) return out;
+  const sorted = [...dates].sort();
+  const from = sorted[0];
+  const toEx = addDays(sorted[sorted.length - 1], 1);
+  const [allRows, slots] = await Promise.all([
+    listCapacityRows(env.PAWSERVATION_DB, tenant.Id, from, toEx, undefined, scope),
+    option.Capacity === null
+      ? Promise.resolve(null)
+      : listSlotBookingCounts(
+          env.PAWSERVATION_DB,
+          tenant.Id,
+          service.ServiceType,
+          option.OptionKey,
+          from,
+          toEx,
+          undefined,
+          scope,
+          excludeSeriesId ?? undefined,
+        ),
+  ]);
+  const rows =
+    excludeSeriesId === null ? allRows : allRows.filter((r) => r.SeriesId !== excludeSeriesId);
+  const capacity = capacityFromRows(tenant.Id, rows);
+  for (const date of dates) {
+    if (walkHasConflict(date, capacity)) {
+      const covering = rows.filter((r) => r.StartDate <= date && (r.EndDate ?? r.StartDate) > date);
+      out.set(
+        date,
+        covering.some((r) => r.ServiceType === 'blocked')
+          ? 'time_off'
+          : covering.some((r) => r.ServiceType === 'external')
+            ? 'external'
+            : 'other',
+      );
+      continue;
+    }
+    if (slots !== null && option.Capacity !== null) {
+      const count = slots.get(date) ?? 0;
+      if (count + petCount > option.Capacity) {
+        out.set(date, count >= option.Capacity ? 'slot_full' : 'slot_no_room');
+        continue;
+      }
+    }
+    out.set(date, null);
+  }
+  return out;
+}
+
 async function checkSingle(
   env: Env,
   tenant: Tenant,

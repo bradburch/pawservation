@@ -44,7 +44,6 @@ async function seedSingleAndWalk(env: Env, raw: DatabaseSync) {
     estCost: 2500,
     status: 'confirmed',
     seriesId: 's1',
-    syncPending: 0,
   });
   return { single, walk };
 }
@@ -52,7 +51,7 @@ async function seedSingleAndWalk(env: Env, raw: DatabaseSync) {
 type Row = { id: string; seriesId?: string | null } & Record<string, unknown>;
 
 describe('SeriesId plumbing', () => {
-  it('insertBookingRequest stores seriesId and syncPending 0 when asked, and defaults to a single booking with SyncPending 1', async () => {
+  it('insertBookingRequest stores seriesId with SyncPending 0 (a walk never syncs as its own event), and a single booking with SyncPending 1', async () => {
     const { env, raw } = createTestEnv();
     const { single, walk } = await seedSingleAndWalk(env, raw);
     const row = (id: string) => ({

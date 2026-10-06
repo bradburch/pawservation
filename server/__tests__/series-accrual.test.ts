@@ -18,10 +18,10 @@ import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
  * the calendar, which is what the last-but-three case pins.
  */
 
-const TODAY = '2030-03-12'; // a Tuesday; every date below is relative to it and fixed
-const PAST = '2030-03-05';
-const NEXT_WEEK = '2030-03-19';
-const LATER = '2030-03-26';
+const TODAY = '2099-03-10'; // a Tuesday; every date below is relative to it and fixed
+const PAST = '2099-03-03';
+const NEXT_WEEK = '2099-03-17';
+const LATER = '2099-03-24';
 const CHARGE = 800; // a surcharge already logged against the LATER walk
 
 // The base seed's own client and pet (sql/seed.sql): Jess and Bella at Sunny Paws, and a second
@@ -38,7 +38,7 @@ function insertSeries(raw: Raw, id: string, tenantId: string, userId: string, st
     .prepare(
       `INSERT INTO BookingSeries (Id, TenantId, EndUserId, ServiceType, Weekdays, StartDate, Status,
          CreatedBy, CreatedAt, UpdatedAt)
-       VALUES (?, ?, ?, 'walk', 2, ?, 'active', 'client', '2030-03-01T00:00:00Z', '2030-03-01T00:00:00Z')`,
+       VALUES (?, ?, ?, 'walk', 2, ?, 'active', 'client', '2099-03-01T00:00:00Z', '2099-03-01T00:00:00Z')`,
     )
     .run(id, tenantId, userId, start);
 }
@@ -171,9 +171,9 @@ describe('a walk is owed from its own date', () => {
   it('a malformed today is refused before any SQL runs', async () => {
     const { env } = world();
     await expect(
-      getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, "2030-03-12' OR 1=1 --"),
+      getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, "2099-03-10' OR 1=1 --"),
     ).rejects.toThrow(RangeError);
-    await expect(getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, '2030-02-30')).rejects.toThrow(
+    await expect(getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, '2099-02-30')).rejects.toThrow(
       RangeError,
     );
   });
@@ -313,7 +313,7 @@ describe('payments agree with the accrual in both directions', () => {
 
   it('over HTTP: a booking payment on a future walk is 409 not_yet_due; the household payment is taken and nets on the date', async () => {
     const { env } = world();
-    // The route reads the real clock; every date in this world is in 2030, so w_next is future.
+    // The route reads the real clock; every date in this world is in 2099, so w_next is future.
     const headers = { ...(await adminHeaders(TENANT_A)), 'Content-Type': 'application/json' };
     const body = JSON.stringify({ amountCents: 2500, method: 'cash', paidDate: TODAY });
     const refused = await app.request(
