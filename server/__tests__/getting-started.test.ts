@@ -237,6 +237,8 @@ describe('copy clarity across the marketing pages', () => {
       const body = await page(path);
       expect(body, path).toContain(PRICE_LINE);
       expect(body, path).toContain(TRIAL_LINE);
+      // One trial per sitter: choosing a plan during it never starts a second one.
+      expect(body, path).toContain('choosing a plan doesn&rsquo;t extend the trial');
       expect(body, path).not.toContain('per sitter per month');
       expect(body, path).not.toContain('a month for one sitter');
     }
