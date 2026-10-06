@@ -171,17 +171,18 @@ describe('GET / — landing page', () => {
     // took it over. Pinned to the exact wording: the chip is the ONE place the hero states this,
     // and a second copy in the sub would be the same idea twice on one screen.
     // Owner repriced on 2026-09-04: the chip is $15 with a 30-day trial, interpolated from PRICING.
-    expect(body).toContain('<p class="chip">$15 a month for one sitter. 30-day free trial.</p>');
+    expect(body).toContain('<p class="chip">$15 a month. 30-day free trial.</p>');
     // Above the fold means the safe zone: before the h1, and well before the demo/invite note,
     // which is borderline on a phone.
     const chip = body.indexOf('<p class="chip">');
     expect(chip).toBeGreaterThan(-1);
     expect(chip).toBeLessThan(body.indexOf('<h1>'));
     expect(chip).toBeLessThan(body.indexOf('<p class="note">'));
-    // The hero says what the pricing section says. "for one sitter" is the price card's own
-    // qualifier, so the hero cannot promise a tier section five then walks back.
-    expect(body).toContain('<h2 id="pricing-h">$15 a month for one sitter</h2>');
-    expect(body).toContain('<span class="price-per">for one sitter</span>');
+    // The hero says what the pricing section says. 2026-10-05: one wording everywhere (PRICE_LINE),
+    // so Solo is "$15 a month" with no qualifier: Solo is one sitter by definition, and "per
+    // sitter" belongs to Pro, which sells extra sitters.
+    expect(body).toContain('<h2 id="pricing-h">$15 a month</h2>');
+    expect(body).toContain('<span class="price-per">a month</span>');
     // $15 is a standing price, not a discount with a clock on it. The 30-day trial the owner added
     // on 2026-09-04 is a trial, not an offer, so 'free trial' left this list and the rest stayed.
     for (const offer of ['limited time', '% off', 'was $']) {
@@ -300,16 +301,17 @@ describe('GET / — landing page', () => {
     const body = await landingBody();
     expect(body).not.toContain('Do you handle weekly regulars?');
     expect(body).not.toContain('a weekly Tuesday is booked one Tuesday at a time');
-    // The ban is what must survive the removal: no repeating support exists anywhere in the
-    // repo, so nothing on this page may offer one under any name.
-    for (const unbuilt of [
-      'repeat weekly',
-      'recurring booking',
-      'standing booking',
-      'repeating booking',
-      'every tuesday',
-    ])
+    // The ban is what must survive the removal: the booking page has no repeating control, so
+    // nothing on this page may offer one under any name.
+    // NARROWED 2026-10-05, on the owner's instruction after persona reviews: Pro's assistant DOES
+    // take a repeat request ("every Tuesday and Thursday until the end of November"), expanding it
+    // into dated requests she still confirms one by one, and a dog walker needs to read that before
+    // signing up. So 'every tuesday' and 'repeating booking' left the list, and the note that says
+    // so is pinned below; the names of a booking-page control that does not exist stay banned.
+    for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
       expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
+    expect(body).toContain('On your booking page a client picks each date for now.');
+    expect(body).toContain('each date still comes to you to confirm');
     const { env } = createTestEnv();
     const tour = await (await app.request('/how-it-works', {}, env)).text();
     expect(tour).toContain('repeat weekly');

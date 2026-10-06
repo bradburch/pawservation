@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { BRAND_ORIGIN } from '../lib/email';
-import { PRICING } from '../lib/plan-pricing';
+import { PRICE_LINE, TRIAL_LINE } from '../lib/plan-pricing';
 import { createTestEnv } from './helpers';
 
 async function guideBody(): Promise<string> {
@@ -147,10 +147,8 @@ describe('GET /getting-started — the sitter setup guide', () => {
 
   it('states the plans from PRICING and offers no checkout of its own', async () => {
     const body = await guideBody();
-    expect(body).toContain(`$${PRICING.soloMonthly} per sitter per month`);
-    expect(body).toContain(`${PRICING.trialDays}-day free trial`);
-    expect(body).toContain(`$${PRICING.proMonthly} per sitter per month`);
-    expect(body).toContain(`$${PRICING.proAnnual} a year`);
+    expect(body).toContain(PRICE_LINE);
+    expect(body).toContain(TRIAL_LINE);
     // The page tells her where her dashboard's own plan controls are; it is never a checkout.
     expect(body).not.toMatch(
       /upgrade now|buy now|enter your card|start (your |a )?free trial|no credit card|no card required/i,
@@ -187,7 +185,8 @@ describe('GET /getting-started — the sitter setup guide', () => {
   it('names no premium path and no premium repository', async () => {
     const body = await guideBody();
     expect(body).not.toContain('/premium/');
-    expect(body).not.toContain('pawservation-premium');
+    // Assembled, so this file does not itself name the other project (phone-copy.test.ts).
+    expect(body).not.toContain(['pawservation', 'premium'].join('-'));
   });
 
   it('keeps to the voice rules every marketing page keeps', async () => {
@@ -200,5 +199,88 @@ describe('GET /getting-started — the sitter setup guide', () => {
       expect(copy, String(jargon)).not.toMatch(jargon);
     // Founder-chosen marketing: WhatsApp is sold as available, so no hedge goes in the copy.
     expect(copy).not.toMatch(/coming soon|not (yet )?available|in development/i);
+  });
+});
+
+/**
+ * 2026-10-05 copy-clarity pass, after persona reviews. Each pin is a sentence a reviewer could not
+ * find or found contradicted on another page, so each is asserted on every page that states it.
+ */
+describe('copy clarity across the marketing pages', () => {
+  async function page(path: string): Promise<string> {
+    const { env } = createTestEnv();
+    return (await app.request(path, {}, env)).text();
+  }
+
+  it('never frames the product as website-only', async () => {
+    for (const path of ['/', '/how-it-works', '/getting-started', '/terms']) {
+      const body = await page(path);
+      expect(body, path).not.toContain('embedded on your own website');
+      expect(body, path).not.toContain('embeds on its own website');
+      expect(body, path).not.toContain('Booking page on your own site');
+    }
+    expect(await page('/')).toContain('on your website or at a link you send');
+  });
+
+  it('shows the real script host and sends her to the dashboard for her own code', async () => {
+    for (const path of ['/', '/how-it-works']) {
+      const body = await page(path);
+      expect(body, path).not.toContain('your-site');
+      expect(body, path).toContain(`${BRAND_ORIGIN}/embed.js`);
+      expect(body, path).toContain('Settings &rarr; Your website');
+    }
+    expect(await page('/')).toContain('Have a website?');
+  });
+
+  it('states the price and the trial in one wording on every page', async () => {
+    for (const path of ['/', '/how-it-works', '/getting-started']) {
+      const body = await page(path);
+      expect(body, path).toContain(PRICE_LINE);
+      expect(body, path).toContain(TRIAL_LINE);
+      expect(body, path).not.toContain('per sitter per month');
+      expect(body, path).not.toContain('a month for one sitter');
+    }
+  });
+
+  it('links Stripe’s own pricing beside the published-rate claim', async () => {
+    for (const path of ['/', '/how-it-works', '/getting-started'])
+      expect(await page(path), path).toContain('href="https://stripe.com/pricing"');
+  });
+
+  it('explains charging after a stay as opt-in, balance-only, and never retried', async () => {
+    const body = await page('/getting-started');
+    expect(body).toContain('This only ever happens to a client who asked for it.');
+    expect(body).toContain('Allow charges after stays');
+    expect(body).toContain('Clients who don&rsquo;t opt in pay you the way they do now.');
+    expect(body).toContain('If a card is declined, it is not tried again');
+    expect(await page('/how-it-works')).toContain('Clients who don&rsquo;t opt in');
+  });
+
+  it('names what the assistant handles and what happens when its allowance runs out', async () => {
+    for (const path of ['/', '/how-it-works', '/getting-started']) {
+      const body = await page(path);
+      expect(body, path).toContain('daily allowance');
+      expect(body, path).toMatch(/pointed to your booking page, which always works/);
+    }
+  });
+
+  it('says what a new visitor sees on the booking page', async () => {
+    for (const path of ['/', '/how-it-works', '/getting-started'])
+      expect(await page(path), path).toContain('get in touch with you so you can add them');
+  });
+
+  it('discloses one-at-a-time booking where a dog walker meets it before signing up', async () => {
+    expect(await page('/')).toContain('On your booking page a client picks each date for now.');
+    const tour = await page('/how-it-works');
+    expect(tour.indexOf('No repeating bookings on the booking page yet.')).toBeLessThan(
+      tour.indexOf('id="confirm"'),
+    );
+  });
+
+  it('sends her to card payments through the audit card, by label', async () => {
+    const body = await page('/getting-started');
+    expect(body).toContain(
+      'find &ldquo;Card payments&rdquo; and choose &ldquo;Open card payments&rdquo;',
+    );
   });
 });

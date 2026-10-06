@@ -270,8 +270,8 @@ describe('SEO surface', () => {
     expect(body).toContain('not a marketplace');
     // The owner repriced on 2026-09-04: the Status section states both tiers, and the two limits
     // above are scoped to Solo rather than to the product.
-    expect(body).toContain('Solo is $15 per sitter per month and starts with a 30-day free trial');
-    expect(body).toContain('Pro is $29 per sitter per month, or $290 per sitter per year');
+    expect(body).toContain('Solo is $15 a month. Pro is $29 a month or $290 a year, per sitter.');
+    expect(body).toContain('The 30-day free trial is Solo, with no card needed to start it.');
     expect(body).toContain('Staffing a team on Solo');
     // Live addresses, so the origin is the one the reader arrived at.
     expect(body).toContain('http://localhost/embed/{sitter-slug}/llms.txt');

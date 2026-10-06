@@ -12,7 +12,7 @@ import { renderInviteForm } from './lib/invite-form';
 import { requestContext } from './lib/log';
 import { tenantMiddleware } from './lib/middleware';
 import { PAGE_STYLE } from './lib/page-style';
-import { PRICING } from './lib/plan-pricing';
+import { PRICE_LINE, PRICING, TRIAL_LINE } from './lib/plan-pricing';
 import { premiumOrigin } from './lib/premium';
 import { resolveTenant } from './lib/tenant-resolve';
 import { accountsRoutes } from './routes/accounts';
@@ -238,6 +238,13 @@ app.get('/demo.html', page('demo.html'));
 app.get('/setup.html', page('setup.html'));
 
 /**
+ * Where "Stripe's published rate" points, beside every place a page states it. Stripe's own page,
+ * because this product states no processing figure of its own: none is in code, and a number typed
+ * here would go stale the day Stripe changed theirs.
+ */
+const STRIPE_LINK = '(<a href="https://stripe.com/pricing">see Stripe&rsquo;s pricing</a>)';
+
+/**
  * The shared page footer. Extracted when /about and /contact would have made it a SIXTH hand-kept
  * copy of the same markup — the four that existed had already drifted into two variants that
  * differed only in one link's label and one anchor's href, which is the drift a fifth and sixth
@@ -254,7 +261,7 @@ function pageFooter(): string {
               <img src="/brand/calendar.svg" width="30" height="28" alt="" />
               Pawservation
             </a>
-            <p>Booking software for pet sitters and dog walkers, embedded on your own website.</p>
+            <p>Booking software for pet sitters and dog walkers, on your website or at a link you send.</p>
           </div>
           <div>
             <h3>Product</h3>
@@ -410,7 +417,7 @@ const LANDING_HTML = `<!doctype html>
                  what this is, and a shopper arrives holding an incumbent's monthly figure. The
                  words are the pricing section's own heading, so the hero and section five cannot
                  drift apart, and every figure comes from PRICING rather than the markup. -->
-            <p class="chip">$${PRICING.soloMonthly} a month for one sitter. ${PRICING.trialDays}-day free trial.</p>
+            <p class="chip">$${PRICING.soloMonthly} a month. ${PRICING.trialDays}-day free trial.</p>
             <h1>Less time answering texts. More time with the pets.</h1>
             <p class="sub">
               Pawservation is pet sitting and dog walking software. Your booking page answers the
@@ -479,6 +486,7 @@ const LANDING_HTML = `<!doctype html>
               <p>Every household has one running balance, so you both see the same answer without scrolling back through texts.</p>
             </div>
           </div>
+          <p class="note wf-more">Walk the same dogs every week? On your booking page a client picks each date for now. On Pro they can ask the assistant for every Tuesday and Thursday until the end of November instead, and each date still comes to you to confirm.</p>
         </div>
       </section>
 
@@ -699,8 +707,10 @@ const LANDING_HTML = `<!doctype html>
             <h2 id="pro-h">A friendly assistant, and you still decide</h2>
             <p>
               On Pro, a booking assistant answers your clients in the chat on your booking page and
-              on your own WhatsApp number. It handles the routine questions and leaves every booking
-              for you to confirm with a tap.
+              on your own WhatsApp number. It handles the routine questions, whether you&rsquo;re free,
+              what a stay costs, moving a date and what they owe, and leaves every booking for you
+              to confirm with a tap. It has a daily allowance, and when that runs out clients are
+              pointed to your booking page, which always works.
             </p>
           </div>
           <div class="features features-3">
@@ -714,7 +724,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Card payments through your own Stripe account</h3>
-              <p>Take deposits, let clients save a card, and have the balance charged after each stay. You pay Stripe&rsquo;s published rate and no fee to Pawservation.</p>
+              <p>Take deposits, and let clients who choose to save a card have what they still owe charged after each stay. You pay Stripe&rsquo;s published rate and no fee to Pawservation ${STRIPE_LINK}, and Stripe pays you directly.</p>
             </div>
           </div>
           <div class="cta-row mid-cta">
@@ -728,11 +738,10 @@ const LANDING_HTML = `<!doctype html>
         <div class="wrap">
           <div class="section-head">
             <span class="label">Pricing</span>
-            <h2 id="pricing-h">$${PRICING.soloMonthly} a month for one sitter</h2>
+            <h2 id="pricing-h">$${PRICING.soloMonthly} a month</h2>
             <p>
               Pro adds a booking assistant in your page&rsquo;s chat and on WhatsApp, card
-              payments through your own Stripe account and extra sitters, for
-              $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} a year.
+              payments through your own Stripe account and extra sitters. ${PRICE_LINE}
             </p>
           </div>
           <div class="price-grid">
@@ -742,10 +751,10 @@ const LANDING_HTML = `<!doctype html>
               </div>
               <p class="price-amt">
                 <span class="price-num">$${PRICING.soloMonthly}</span>
-                <span class="price-per">for one sitter</span>
+                <span class="price-per">a month</span>
               </p>
               <ul class="price-list">
-                <li>Booking page on your own site, unlimited bookings</li>
+                <li>Booking page on your website or at a link you send, unlimited bookings</li>
                 <li>Your availability rules, applied for you</li>
                 <li>How much notice you need, and how far ahead people can book</li>
                 <li>Rates, payments and one running balance per household</li>
@@ -755,7 +764,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Google Calendar sync, both directions</li>
               </ul>
               <a class="btn btn-primary" href="#invite-h">Sign up</a>
-              <p class="note">The first ${PRICING.trialDays} days are free. New sitters are added by hand for now, so ask and we&rsquo;ll email you a sign-up link.</p>
+              <p class="note">The first ${PRICING.trialDays} days are free, and you don&rsquo;t need a card to start. New sitters are added by hand for now, so ask and we&rsquo;ll email you a sign-up link.</p>
             </div>
             <div class="price-card">
               <div class="price-head">
@@ -763,7 +772,7 @@ const LANDING_HTML = `<!doctype html>
               </div>
               <p class="price-amt">
                 <span class="price-num">$${PRICING.proMonthly}</span>
-                <span class="price-per">per sitter, per month</span>
+                <span class="price-per">a month, per sitter</span>
               </p>
               <ul class="price-list">
                 <li>Everything in Solo</li>
@@ -775,9 +784,10 @@ const LANDING_HTML = `<!doctype html>
                 <li>Extra sitters, with assignment</li>
               </ul>
               <a class="btn btn-primary" href="#invite-h">Sign up</a>
-              <p class="note">$${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, which is $${PRICING.proMonthly * 12 - PRICING.proAnnual} less than paying by the month.</p>
+              <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year, per sitter. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
             </div>
           </div>
+          <p class="note wf-more">${TRIAL_LINE}</p>
           <p class="note wf-more">
             <a href="#invite-h">Sign up</a> and we&rsquo;ll get you started.
           </p>
@@ -787,11 +797,11 @@ const LANDING_HTML = `<!doctype html>
       <section class="section" id="install" aria-labelledby="install-h">
         <div class="wrap install-grid">
           <div class="install-copy">
-            <span class="label">Install</span>
-            <h2 id="install-h">One line on any website</h2>
-            <p>Paste it into Squarespace, Wix or whatever you already use, swap in your business&rsquo;s short name, and save. It sizes itself to fit the page.</p>
-            <p>It is safe on a public page, because only your clients can book. Anyone else gets a welcome under your name and a sign-in box.</p>
-            <p>Forward this box to whoever edits your site. No site? Skip this step and send clients your booking link instead.</p>
+            <span class="label">Have a website?</span>
+            <h2 id="install-h">One line puts your booking page on it</h2>
+            <p>Copy it from <strong>Settings &rarr; Your website</strong>, in your dashboard, where it already carries your business&rsquo;s name. On Squarespace, add a Code block and paste it. On Wix, choose &ldquo;Embed a site&rdquo; and use the second code shown there. It sizes itself to fit the page.</p>
+            <p>It is safe on a public page, because only your clients can book. A new visitor gets a welcome under your name, a sign-in box, and a note to get in touch with you so you can add them.</p>
+            <p>No website? Skip this and send clients your booking link instead.</p>
           </div>
           <div class="codecard">
             <div class="codecard-cap">
@@ -799,8 +809,8 @@ const LANDING_HTML = `<!doctype html>
               <span>paste &amp; save</span>
             </div>
             <div class="code-scroll">
-<pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;https://your-site/embed.js&quot;
-        <span class="attr">data-pawservation-tenant</span>=&quot;your-slug&quot;
+<pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;${BRAND_ORIGIN}/embed.js&quot;
+        <span class="attr">data-pawservation-tenant</span>=&quot;your-business&quot;
         <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
             </div>
           </div>
@@ -910,7 +920,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p>
               You don&rsquo;t need a website. Your booking page can sit on the site you already
               have, or live at a link of its own.
-              Only clients you have added can book. Anyone else sees your name and a sign-in box.
+              Only clients you have added can book. Anyone else sees your name and a sign-in box,
+              with a note to get in touch with you so you can add them.
             </p>
           </div>
           <div class="features features-3">
@@ -931,6 +942,12 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             On your booking page, a client picks a service, picks the dates or a visit time, chooses
             which of their pets are coming, sees the price and answers your intake questions.
           </p>
+          <div class="wf-math">
+            <div class="wf-pair">
+              <p class="wf-keep">No repeating bookings on the booking page yet.</p>
+              <p>A client who wants a walk every Tuesday picks each Tuesday there, and there is no &ldquo;repeat weekly&rdquo; to set. On Pro they can ask the assistant instead, for every Tuesday and Thursday until the end of November, say: it lists each date with its price for them to approve, up to 60 dates at a time, and every one still comes to you to confirm. They can cancel the rest of a run the same way.</p>
+            </div>
+          </div>
           <!-- The landing page's own screenshots, captured from the seeded demo (fixed 2028
                months, never "today") and already inside its weight budget. -->
           <ol class="steps">
@@ -1121,7 +1138,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p>
               The assistant answers your clients with your rates, your rules and your open dates:
               whether you&rsquo;re free, what a stay costs, moving a date, what they owe. Every
-              booking it takes still waits for you.
+              booking it takes still waits for you. It has a daily allowance, and when that runs
+              out clients are pointed to your booking page, which always works.
             </p>
           </div>
           <div class="features features-3">
@@ -1135,7 +1153,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>Card payments</h3>
-              <p>Take deposits, let clients save a card, and have the balance charged after each stay. You pay Stripe&rsquo;s published rate and no fee to Pawservation.</p>
+              <p>Take deposits. A client who pays one can save the card and allow charges after each stay, and then what that booking still owes is charged the morning after it ends. Clients who don&rsquo;t opt in pay you the way they do now. You pay Stripe&rsquo;s published rate and no fee to Pawservation ${STRIPE_LINK}.</p>
             </div>
           </div>
         </div>
@@ -1148,8 +1166,9 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h2 id="setup-h">Three steps to a booking page</h2>
             <p><strong>Sign up.</strong> Pawservation is invite-only while it grows, so tell us about your business and we will email you a sign-up link.</p>
             <p><strong>Set up your services and rates.</strong> The wizard offers presets, each a whole service already shaped, so you tap the ones that describe you and type your prices.</p>
-            <p><strong>Paste one line on your website.</strong> Into a page on Squarespace, Wix or plain HTML, swapping in your own short name. The widget sizes itself to fit, and there is an iframe version if your host strips scripts.</p>
-            <p class="note">Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} a year, and adds card payments, booking by WhatsApp, booking by chat and extra sitters. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
+            <p><strong>Share your booking page.</strong> No website? Copy your booking link from <strong>Settings &rarr; Your website</strong>, and send it to clients. Have a website? Copy the code from the same place, already carrying your business&rsquo;s name, and paste it into a Code block on Squarespace, or use the second code with Wix&rsquo;s &ldquo;Embed a site&rdquo;. It sizes itself to fit.</p>
+            <p class="note">${PRICE_LINE} Pro adds card payments, booking by WhatsApp, booking by chat and extra sitters. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
+            <p class="note">${TRIAL_LINE}</p>
             <p class="note">Want every step written out, from your first sign-in to connecting WhatsApp? Read the <a href="/getting-started">setup guide</a>.</p>
           </div>
           <div class="codecard">
@@ -1158,16 +1177,16 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <span>paste &amp; save</span>
             </div>
             <div class="code-scroll">
-<pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;https://your-site/embed.js&quot;
-        <span class="attr">data-pawservation-tenant</span>=&quot;your-slug&quot;
+<pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;${BRAND_ORIGIN}/embed.js&quot;
+        <span class="attr">data-pawservation-tenant</span>=&quot;your-business&quot;
         <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
             </div>
             <div class="codecard-cap">
-              <span>or, if scripts are stripped</span>
-              <span>iframe fallback</span>
+              <span>or, on Wix and builders that strip scripts</span>
+              <span>second code</span>
             </div>
             <div class="code-scroll">
-<pre><span class="tag">&lt;iframe</span> <span class="attr">src</span>=&quot;https://your-site/embed/your-slug&quot;
+<pre><span class="tag">&lt;iframe</span> <span class="attr">src</span>=&quot;${BRAND_ORIGIN}/embed/your-business&quot;
         <span class="attr">title</span>=&quot;Booking widget&quot;
         <span class="attr">style</span>=&quot;width:100%;height:640px;border:0;&quot;<span class="tag">&gt;&lt;/iframe&gt;</span></pre>
             </div>
@@ -1185,10 +1204,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h2 id="limits-h">Good to know before you start</h2>
           </div>
           <div class="wf-math">
-            <div class="wf-pair">
-              <p class="wf-keep">No repeating bookings yet.</p>
-              <p>A client who wants a walk every Tuesday picks each Tuesday, and there is no &ldquo;repeat weekly&rdquo; to set.</p>
-            </div>
             <div class="wf-pair">
               <p class="wf-keep">Solo runs one sitter per account.</p>
               <p>Extra sitters, with assignment between them, are part of Pro.</p>
@@ -1383,7 +1398,7 @@ const TERMS_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h2>What Pawservation is</h2>
-            <p>Pawservation is booking and scheduling software that a pet-sitting business embeds on its own website. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and their customer.</p>
+            <p>Pawservation is booking and scheduling software that a pet-sitting business uses to take bookings on its own website or at a booking link it shares. Pawservation does not perform pet-sitting services, and is not a party to the agreement between a sitter and their customer.</p>
           </div>
           <div class="feature">
             <h2>Accounts</h2>
@@ -1759,31 +1774,39 @@ const GETTING_STARTED_HTML = `<!doctype html>
               <li><strong>On Wix</strong> (choose &ldquo;Embed a site&rdquo;) and builders where the first one doesn&rsquo;t work, use the second code and its own &ldquo;Copy the code&rdquo; button.</li>
               <li><strong>No website?</strong> Press &ldquo;Copy the link&rdquo; and text or email it to your clients. It opens the same booking page on its own, with nothing to build or host.</li>
             </ul>
-            <p>The page is safe to put in public, because only clients you have added can book. Anyone else sees your name and a sign-in box. Your services and rates can be read by anyone with the address.</p>
+            <p>The page is safe to put in public, because only clients you have added can book. A new visitor sees a welcome under your name, a sign-in box, and a note asking them to get in touch with you so you can add them. Your services and rates can be read by anyone with the address.</p>
           </div>
 
           <div class="feature" id="plan">
             <h2>9. Choosing a plan</h2>
-            <p>Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial: your booking page, clients, rates, payment tracking and Google Calendar. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} a year, and adds a booking assistant in your booking page&rsquo;s chat and on WhatsApp, card payments through your own Stripe account, and extra sitters.</p>
-            <p>Your plan lives at the bottom of <strong>Settings &rarr; Business</strong>, under &ldquo;Your plan&rdquo;. Press &ldquo;Subscribe&rdquo; beside Solo, Pro or Pro, yearly, and payment happens on Stripe&rsquo;s own page, so Pawservation never sees your card. Once you have a plan, &ldquo;Manage plan&rdquo; is where you change your card or see past payments, and &ldquo;Sync with Stripe&rdquo; puts things right if your plan ever looks wrong there.</p>
+            <p>${PRICE_LINE} Solo is your booking page, clients, rates, payment tracking and Google Calendar. Pro adds a booking assistant in your booking page&rsquo;s chat and on WhatsApp, card payments through your own Stripe account, and extra sitters.</p>
+            <p>${TRIAL_LINE}</p>
+            <p>Your plan lives at the bottom of <strong>Settings &rarr; Business</strong>, under &ldquo;Your plan&rdquo;. Press &ldquo;Subscribe&rdquo; beside Solo, Pro or Pro, yearly. Stripe asks for your card on its own page, so Pawservation never sees it, and Pro&rsquo;s features switch on as soon as you subscribe to Pro. Once you have a plan, &ldquo;Manage plan&rdquo; is where you change your card or see past payments, and &ldquo;Sync with Stripe&rdquo; puts things right if your plan ever looks wrong there.</p>
             <p>Nothing about your bookings, clients or pets changes when you subscribe or switch plans. A plan only decides which extras are switched on.</p>
           </div>
 
           <div class="feature" id="cards">
             <h2>10. Card payments, on Pro</h2>
-            <p>Card payments run through a Stripe account of your own. You pay Stripe&rsquo;s published rate on each payment, no fee to Pawservation, and Stripe pays you directly into your own bank account on Stripe&rsquo;s schedule. Pawservation never holds your money.</p>
-            <p><strong>Connecting.</strong> In your Pawservation assistant, press &ldquo;Connect Stripe&rdquo;. Stripe opens and asks for your details and your bank account, the same as any Stripe signup. When you come back, Stripe may still be checking your details for a few minutes; &ldquo;Continue setup&rdquo; takes you back to Stripe if it needs anything else.</p>
-            <p><strong>An access token.</strong> Card payments need to act for you when nobody is signed in, for example to record a deposit at night. Open <strong>Settings &rarr; Business &rarr; Access tokens</strong>, create a token, paste it into the assistant and press &ldquo;Save token&rdquo;. When it is done the assistant says card payments are on and names the Stripe account the money goes to.</p>
+            <p>Card payments run through a Stripe account of your own. You pay Stripe&rsquo;s published rate on each payment and no fee to Pawservation ${STRIPE_LINK}. Stripe pays you directly, into your own bank account on Stripe&rsquo;s schedule. Pawservation never holds your money.</p>
+            <p><strong>Connecting.</strong> In the business audit card on your dashboard, find &ldquo;Card payments&rdquo; and choose &ldquo;Open card payments&rdquo;. There, press &ldquo;Connect Stripe&rdquo;. Stripe opens and asks for your details and your bank account, the same as any Stripe signup. When you come back, Stripe may still be checking your details for a few minutes; &ldquo;Continue setup&rdquo; takes you back to Stripe if it needs anything else.</p>
+            <p><strong>An access token.</strong> Card payments need to act for you when nobody is signed in, for example to record a deposit at night. Open <strong>Settings &rarr; Business &rarr; Access tokens</strong>, create a token, paste it into card payments and press &ldquo;Save token&rdquo;. When it is done, card payments says it is on are on and names the Stripe account the money goes to.</p>
             <p><strong>Deposits.</strong> Choose &ldquo;No deposit&rdquo;, &ldquo;A fixed amount&rdquo; or &ldquo;A percentage of the estimate&rdquo;, press &ldquo;Set deposit rule&rdquo;, read the sentence it shows you, and press &ldquo;Confirm deposit rule&rdquo;. A deposit is asked for on confirmed bookings whose stay has not ended yet.</p>
-            <p><strong>Charging the balance after a stay.</strong> Press &ldquo;Charge saved cards after stays&rdquo; and confirm. From then on, every household that has allowed it is charged what its booking still owes on the morning after the stay ends. A card is only charged if that client said yes first, and you can pause any one household, or press &ldquo;Stop charging saved cards&rdquo; to stop them all.</p>
-            <p><strong>What clients see.</strong> In &ldquo;My bookings&rdquo; on your booking page, a deposit that is due shows its amount and a &ldquo;Pay deposit&rdquo; button, which opens Stripe&rsquo;s own payment page. Paying a deposit saves their card. They can then ask the assistant to charge that card after each stay, and they can stop it whenever they like.</p>
+            <p><strong>Charging the balance after a stay.</strong> This only ever happens to a client who asked for it. A client saves a card by paying a deposit, then asks the assistant to charge that card after each stay and taps &ldquo;Allow charges after stays&rdquo;. Once you press &ldquo;Charge saved cards after stays&rdquo; and confirm, each of those households is charged what its booking still owes, as your balance shows it, on the morning after the stay ends. Nothing is worked out or added on, and a stay already paid in full is never charged.</p>
+            <p>Clients who don&rsquo;t opt in pay you the way they do now. You can pause any one household, or press &ldquo;Stop charging saved cards&rdquo; to stop them all, and a client can stop it themselves at any time. If a card is declined, it is not tried again: the balance stays owed on that booking, and you collect it the way you usually would.</p>
+            <p><strong>What clients see.</strong> In &ldquo;My bookings&rdquo; on your booking page, a deposit that is due shows its amount and a &ldquo;Pay deposit&rdquo; button, which opens Stripe&rsquo;s own payment page.</p>
             <p><strong>Turning it off.</strong> &ldquo;Disconnect Stripe&rdquo; removes saved cards, closes open payment links and stops any scheduled charges. Payments already made stay in your Stripe account.</p>
           </div>
 
           <div class="feature" id="whatsapp">
             <h2>11. Booking by WhatsApp, on Pro</h2>
-            <p>Your clients message your own WhatsApp Business number to check dates, get a quote, book, reschedule or cancel. The assistant answers, and every new request comes to you to Confirm or Decline.</p>
-            <p><strong>What you need.</strong> A WhatsApp Business number you control, either the one your clients already message or a new one; a second WhatsApp number of your own for alerts, such as your personal phone; and a payment method with Meta, because Meta bills you directly for the messages your business number sends.</p>
+            <p>Your clients message your own WhatsApp Business number to check dates, get a quote, book, reschedule, cancel or ask what they owe. The assistant answers with your rates and your rules, and every new request comes to you to Confirm or Decline. It has a daily allowance, and when that runs out a client who messages is pointed to your booking page, which always works.</p>
+            <p><strong>What you need:</strong></p>
+            <ul>
+              <li>A WhatsApp Business number you control: the one your clients already message, or a new one.</li>
+              <li>A second WhatsApp number of your own for alerts, such as your personal phone. It has to be a US number, and it can&rsquo;t be the business number.</li>
+              <li>A payment method with Meta. Meta bills you directly for the messages your business number sends.</li>
+              <li>A little patience after connecting: Meta reviews the wording of the messages your number sends, and alerts start once it approves them.</li>
+            </ul>
             <p><strong>Where it lives.</strong> On Pro, open <strong>Settings &rarr; Services &amp; Rates</strong> and scroll to the bottom. The panel there has a section headed &ldquo;WhatsApp&rdquo;.</p>
             <ol>
               <li>Press &ldquo;Connect WhatsApp&rdquo;. A window opens with two choices: &ldquo;Keep the number my clients already text&rdquo; or &ldquo;Use a new number&rdquo;. Meta&rsquo;s own signup runs next; pick one WhatsApp Business account and one number. When it says &ldquo;Connected&rdquo;, close the window.</li>
@@ -1805,6 +1828,7 @@ const GETTING_STARTED_HTML = `<!doctype html>
               <li>They pick a service, the dates or a visit time, and their pets, see the price, answer your questions, and press &ldquo;Request Booking&rdquo;.</li>
               <li>Under &ldquo;My bookings&rdquo; they see each request as &ldquo;Awaiting confirmation&rdquo; until you confirm it, and they are emailed when you do. They can change or cancel their own bookings there.</li>
               <li>On Pro, they can ask the chat on your booking page, or message your WhatsApp number, instead.</li>
+              <li>On the booking page a client picks each date; there are no repeating bookings there yet. On Pro they can ask the assistant for every Tuesday and Thursday until the end of November, say. It lists each date with its price for them to approve, up to 60 at a time, every one still comes to you to confirm, and they can cancel the rest of a run the same way.</li>
             </ul>
           </div>
 

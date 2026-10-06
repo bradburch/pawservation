@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SERVICE_TEMPLATES } from '../../src/shared/index.js';
 import app from '../index';
-import { PRICING } from '../lib/plan-pricing';
+import { PRICE_LINE, TRIAL_LINE } from '../lib/plan-pricing';
 import { createTestEnv } from './helpers';
 
 async function howItWorksBody(): Promise<string> {
@@ -371,7 +371,9 @@ describe('GET /how-it-works — the tour page', () => {
     // No recurring/series support anywhere in the repo. landing.test.ts reaches across for this
     // same substring, since the landing page's FAQ went and this is where the answer lives.
     expect(body).toContain('repeat weekly');
-    expect(body).toContain('No repeating bookings yet.');
+    // 2026-10-05: scoped to the booking page, because Pro's assistant takes repeat requests.
+    expect(body).toContain('No repeating bookings on the booking page yet.');
+    expect(body).toContain('up to 60 dates at a time');
   });
 
   it('states the one-sitter limit on Solo, and never claims partial-day time off', async () => {
@@ -485,10 +487,8 @@ describe('GET /how-it-works — the tour page', () => {
     // Five surfaces state these numbers and any two disagreeing is a pricing lie, so the page
     // interpolates rather than hardcodes. There is no billing code in this repo, so the trial is
     // a fact the page states and never a flow it offers.
-    expect(body).toContain(`$${PRICING.soloMonthly} per sitter per month`);
-    expect(body).toContain(`${PRICING.trialDays}-day free trial`);
-    expect(body).toContain(`$${PRICING.proMonthly} per sitter per month`);
-    expect(body).toContain(`$${PRICING.proAnnual} a year`);
+    expect(body).toContain(PRICE_LINE);
+    expect(body).toContain(TRIAL_LINE);
     expect(body).not.toMatch(
       /upgrade now|buy now|subscribe|enter your card|start (your |a )?free trial|no credit card|no card required/i,
     );

@@ -1,5 +1,5 @@
 import { SUPPORT_EMAIL } from './email';
-import { PRICING } from './plan-pricing';
+import { PRICE_LINE, PRICING } from './plan-pricing';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /** Escape so tenant-controlled strings can never close the script element or open a new tag. */
@@ -98,7 +98,7 @@ export function buildJsonLdScript(tenant: Tenant, origin: string): string {
 export function buildProductLlmsTxt(origin: string): string {
   return `# Pawservation
 
-> Booking software for pet sitters and dog walkers. A booking widget the sitter embeds on their own website: their services, their rates, their availability rules. Clients request dates, the sitter confirms or declines, and the app tracks what is owed.
+> Booking software for pet sitters and dog walkers. A booking page the sitter puts on their own website or sends as a link: their services, their rates, their availability rules. Clients request dates, the sitter confirms or declines, and the app tracks what is owed.
 
 ## When to use this
 
@@ -116,7 +116,7 @@ export function buildProductLlmsTxt(origin: string): string {
 
 ## Status
 
-- Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year.
+- ${PRICE_LINE} The ${PRICING.trialDays}-day free trial is Solo, with no card needed to start it.
 - New sitters are added by invitation while the product grows: ${origin}/#invite-h
 
 ## Pages
@@ -197,7 +197,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `One sitter, unlimited bookings, $${PRICING.soloMonthly} per month. Starts with a ${PRICING.trialDays}-day free trial.`,
+            description: `One sitter, unlimited bookings, $${PRICING.soloMonthly} a month. Starts with a ${PRICING.trialDays}-day free trial.`,
           },
           {
             '@type': 'Offer',
@@ -210,7 +210,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `Everything in Solo plus card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} per year.`,
+            description: `Everything in Solo plus card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year, per sitter.`,
           },
         ],
         publisher: { '@id': `${origin}/#organization` },
