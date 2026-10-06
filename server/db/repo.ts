@@ -1002,6 +1002,23 @@ export async function listBookingsForTenant(
   });
 }
 
+/** Optimistic-concurrency precondition for `updateBookingStatus` (see its doc). */
+export interface ExpectedBooking {
+  startDate: string;
+  endDate: string | null;
+  petCount: number;
+  estCostCents: number | null;
+}
+
+/** The SQL fragment and binds for an `expected` precondition; empty when there is none. */
+function expectedClause(expected?: ExpectedBooking): { sql: string; binds: unknown[] } {
+  if (!expected) return { sql: '', binds: [] };
+  return {
+    sql: ' AND StartDate = ? AND EndDate IS ? AND PetCount = ? AND EstCost IS ?',
+    binds: [expected.startDate, expected.endDate, expected.petCount, expected.estCostCents],
+  };
+}
+
 /**
  * Sitter-driven lifecycle transition. The guard is entirely in SQL so it's atomic with the write:
  * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' and
@@ -1012,6 +1029,11 @@ export async function listBookingsForTenant(
  * only valid from 'pending': a confirmed booking is cancelled, never declined.
  *
  * Every transition re-enters the calendar outbox; the push that mirrors it clears the flag.
+ *
+ * `expected` is an optional optimistic-concurrency precondition: the dates, pet count and estimate
+ * (CENTS, 0015) the caller was looking at when it decided. It is part of the UPDATE's own WHERE, so
+ * a client edit landing between the caller's read and this write simply matches no row. The two
+ * nullable columns compare with `IS ?` so a single-day or unpriced booking still matches.
  */
 export async function updateBookingStatus(
   db: D1Database,
@@ -1020,16 +1042,18 @@ export async function updateBookingStatus(
   status: 'confirmed' | 'cancelled' | 'declined',
   /** CENTS (0015). */
   cancellationFee?: number,
+  expected?: ExpectedBooking,
 ): Promise<boolean> {
+  const pre = expectedClause(expected);
   // Assessed cancellation: record the fee and cancel atomically. The `Status = 'confirmed'` guard
   // lives in the SQL so a raced double-cancel can't charge the fee twice.
   if (status === 'cancelled' && cancellationFee != null) {
     const result = await db
       .prepare(
         `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = 1
-         WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'confirmed'`,
+         WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'confirmed'${pre.sql}`,
       )
-      .bind(cancellationFee, tenantId, id)
+      .bind(cancellationFee, tenantId, id, ...pre.binds)
       .run();
     return (result.meta as { changes?: number }).changes !== 0;
   }
@@ -1038,17 +1062,17 @@ export async function updateBookingStatus(
       ? await db
           .prepare(
             `UPDATE BookingRequests SET Status = 'declined', SyncPending = 1
-             WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'pending'`,
+             WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'pending'${pre.sql}`,
           )
-          .bind(tenantId, id)
+          .bind(tenantId, id, ...pre.binds)
           .run()
       : await db
           .prepare(
             `UPDATE BookingRequests SET Status = ?, SyncPending = 1
              WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
-               AND Status NOT IN ('cancelled', 'declined')`,
+               AND Status NOT IN ('cancelled', 'declined')${pre.sql}`,
           )
-          .bind(status, tenantId, id)
+          .bind(status, tenantId, id, ...pre.binds)
           .run();
   return (result.meta as { changes?: number }).changes !== 0;
 }

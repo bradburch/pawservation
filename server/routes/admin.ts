@@ -73,6 +73,7 @@ import {
   setEndUserVenmoUsername,
   updateBackfilledBookingCost,
   updateBookingStatus,
+  type ExpectedBooking,
   updateTenantSettings,
   upsertPetGroupRate,
 } from '../db/repo';
@@ -461,6 +462,22 @@ const MAX_CHARGE_LABEL = 60;
 const MAX_VENMO_USERNAME = 30;
 
 /** null/undefined (use default) or a timezone Intl accepts. */
+/** Parses the status route's optional `expected` precondition; null when malformed. */
+function parseExpectedBooking(v: unknown): ExpectedBooking | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const { startDate, endDate, petCount, estCostCents } = o;
+  if (typeof startDate !== 'string' || startDate === '') return null;
+  if (endDate !== null && typeof endDate !== 'string') return null;
+  if (typeof petCount !== 'number' || !Number.isInteger(petCount) || petCount < 1) return null;
+  if (
+    estCostCents !== null &&
+    (typeof estCostCents !== 'number' || !Number.isInteger(estCostCents))
+  )
+    return null;
+  return { startDate, endDate, petCount, estCostCents };
+}
+
 function isValidTimezone(value: unknown): value is string | null | undefined {
   if (value === null || value === undefined) return true;
   if (typeof value !== 'string') return false;
@@ -2750,12 +2767,33 @@ export const adminRoutes = new Hono<AppEnv>()
   .post('/:slug/admin/bookings/:id/status', planExempt, async (c) => {
     const tenant = c.get('tenant');
     const id = c.req.param('id');
-    const body = await c.req
-      .json<{ status?: unknown; chargeFee?: unknown; overrideCapacity?: unknown }>()
-      .catch(() => ({}) as { status?: unknown; chargeFee?: unknown; overrideCapacity?: unknown });
+    type StatusBody = {
+      status?: unknown;
+      chargeFee?: unknown;
+      overrideCapacity?: unknown;
+      expected?: unknown;
+    };
+    const body = await c.req.json<StatusBody>().catch(() => ({}) as StatusBody);
     const status = body.status;
     if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
       return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);
+
+    // OPTIONAL PRECONDITION. A dashboard card is a snapshot: the client may have edited the booking
+    // since it was drawn, and answering the old card would confirm, decline or cancel something the
+    // sitter never saw. When `expected` is sent, the answer applies only if the booking still has
+    // exactly those dates, pet count and estimate — enforced in the UPDATE itself, not here.
+    let expected: ExpectedBooking | undefined;
+    if (body.expected !== undefined) {
+      expected = parseExpectedBooking(body.expected) ?? undefined;
+      if (!expected)
+        return c.json(
+          {
+            error:
+              'expected must be { startDate, endDate (or null), petCount, estCostCents (or null) }.',
+          },
+          400,
+        );
+    }
 
     // CONFIRM RE-CHECKS THE COMMITTED CALENDAR. A pending request occupies capacity, but nothing
     // re-validated when the sitter said yes — so two pending requests for one scarce day could both
@@ -2810,8 +2848,43 @@ export const adminRoutes = new Hono<AppEnv>()
       if (computed > 0) fee = computed; // $0 stores NULL per spec
     }
 
-    const updated = await updateBookingStatus(c.env.PAWSERVATION_DB, tenant.Id, id, status, fee);
-    if (!updated) return c.json({ error: 'Not found.' }, 404);
+    const updated = await updateBookingStatus(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      id,
+      status,
+      fee,
+      expected,
+    );
+    if (!updated) {
+      // Zero rows changed. Without a precondition that is the existing 404. With one, it may be
+      // the precondition: a live, answerable row that no longer looks like the card means the
+      // booking changed under her. A row that still matches failed the status guard instead (it is
+      // already answered), which stays the 404 it always was.
+      if (expected) {
+        const cur = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, id);
+        if (
+          cur &&
+          cur.ServiceType !== 'blocked' &&
+          cur.ServiceType !== 'external' &&
+          !(
+            cur.StartDate === expected.startDate &&
+            cur.EndDate === expected.endDate &&
+            cur.PetCount === expected.petCount &&
+            cur.EstCost === expected.estCostCents
+          )
+        )
+          return c.json(
+            {
+              error:
+                'This booking was changed after you loaded it. Refresh to see the current details, then answer again.',
+              code: 'booking_changed',
+            },
+            409,
+          );
+      }
+      return c.json({ error: 'Not found.' }, 404);
+    }
 
     // One unconditional fetch serves both the calendar hooks and the customer
     // notification below (cancel/decline are soft — the row still exists).
