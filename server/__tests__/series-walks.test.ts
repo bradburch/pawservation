@@ -732,3 +732,72 @@ describe('projectSeries', () => {
     expect(out[out.length - 1].date <= '2032-11-01').toBe(true);
   });
 });
+
+describe('a switched-off service counts as gone for new walks', () => {
+  const setEnabled = (raw: Raw, on: 0 | 1) =>
+    raw
+      .prepare(`UPDATE TenantServices SET Enabled = ? WHERE TenantId = ? AND ServiceType = ?`)
+      .run(on, TENANT_A, SERVICE);
+
+  it('materializeSpan writes nothing — no rows, no skips, the mark not advanced — and keeps the rows it already has', async () => {
+    const { env, raw, tenant, user, terms } = await walkWorld();
+    const series = seedSeriesRow(raw, { id: 's1', endUserId: user, status: 'active', ...TUE });
+    insertRow(raw, { id: 'own', serviceType: SERVICE, date: '2030-11-05', seriesId: 's1' });
+    setEnabled(raw, 0);
+    const out = await materializeSpan(
+      env,
+      tenant,
+      series,
+      { ...terms, ...TUE },
+      '2030-11-19',
+      '2030-11-01',
+      'confirmed',
+    );
+    expect(out).toEqual({ added: [], skipped: [] });
+    expect(raw.prepare(`SELECT Id FROM BookingRequests WHERE SeriesId = 's1'`).all()).toEqual([
+      { Id: 'own' },
+    ]);
+    expect(
+      raw.prepare(`SELECT COUNT(*) AS n FROM BookingSeriesSkips WHERE SeriesId = 's1'`).get(),
+    ).toEqual({ n: 0 });
+    expect(
+      raw.prepare(`SELECT MaterializedThrough FROM BookingSeries WHERE Id = 's1'`).get(),
+    ).toEqual({
+      MaterializedThrough: null,
+    });
+  });
+
+  it('projectSeries projects nothing while it is off, and the walks come back when she switches it on', async () => {
+    const { env, raw, tenant, user, terms } = await walkWorld();
+    const s = seedSeriesRow(raw, {
+      id: 's1',
+      endUserId: user,
+      status: 'active',
+      weekdays: 8,
+      startDate: '2030-11-01',
+    });
+    setEnabled(raw, 0);
+    expect(
+      await projectSeries(env, tenant, s, terms, '2030-11-01', '2030-11-14', '2030-11-01'),
+    ).toEqual([]);
+    setEnabled(raw, 1);
+    const back = await projectSeries(
+      env,
+      tenant,
+      s,
+      terms,
+      '2030-11-01',
+      '2030-11-14',
+      '2030-11-01',
+    );
+    expect(back.map((w) => w.date)).toEqual(['2030-11-07', '2030-11-14']);
+  });
+
+  it('evaluateWalks (a quote or a request) refuses it as SeriesTermsGone', async () => {
+    const { env, raw, tenant, terms } = await walkWorld();
+    setEnabled(raw, 0);
+    await expect(evaluateWalks(env, tenant, terms, ['2030-12-05'], {})).rejects.toBeInstanceOf(
+      SeriesTermsGone,
+    );
+  });
+});

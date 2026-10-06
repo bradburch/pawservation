@@ -108,7 +108,9 @@ async function loadTerms(
     listEndUserPets(db, tenant.Id, terms.endUserId),
   ]);
   const service = services.find((s) => s.ServiceType === terms.serviceType);
-  if (!service) throw new SeriesTermsGone('service');
+  // A service she has switched off is gone for new walks, exactly as a single booking of it is
+  // refused ('service_not_offered'). Rows already written are not touched.
+  if (!service || !service.Enabled) throw new SeriesTermsGone('service');
   const option =
     terms.optionKey === null
       ? options.find((o) => o.ServiceType === terms.serviceType)
@@ -168,6 +170,19 @@ export async function evaluateWalks(
 const earlier = (a: string, b: string): string => (a < b ? a : b);
 
 /**
+ * The series' service exists but she has switched it off. Not an error for the two series-shaped
+ * passes: materializing writes nothing and leaves the mark where it was, and projection shows
+ * nothing — both are recomputed on the next pass, so the walks return when she switches it back
+ * on. A service that is GONE (deleted) still throws `SeriesTermsGone` through `loadTerms`.
+ */
+async function serviceSwitchedOff(env: Env, tenant: Tenant, terms: SeriesTerms): Promise<boolean> {
+  const service = (await listServices(env.PAWSERVATION_DB, tenant.Id)).find(
+    (s) => s.ServiceType === terms.serviceType,
+  );
+  return service !== undefined && !service.Enabled;
+}
+
+/**
  * Write the series' walks from where it last stopped (or from its start, never earlier than
  * tomorrow) through `through` — capped at `projectionCap(today)` — in ONE batch: `prelude` first
  * (a new series and its pets), then a row or a skip per date, then the MaterializedThrough mark.
@@ -194,6 +209,11 @@ export async function materializeSpan(
   skipped: { date: string; reason: SkipReason }[];
 }> {
   const db = env.PAWSERVATION_DB;
+  if (await serviceSwitchedOff(env, tenant, terms)) {
+    // The caller's prelude is still its own to land; nothing of the series' walks is written.
+    await runSeriesBatch(db, prelude);
+    return { added: [], skipped: [] };
+  }
   const end = earlier(through, projectionCap(today));
   // Today's walk is never created late: a series asked for today starts tomorrow; an existing row
   // for today stays. (Same-day lead is MinLeadDays' job at request time.)
@@ -293,6 +313,7 @@ export async function projectSeries(
 ): Promise<ProjectedWalk[]> {
   const status = PROJECTED_STATUS[series.Status];
   if (status === undefined) return [];
+  if (await serviceSwitchedOff(env, tenant, terms)) return [];
   const db = env.PAWSERVATION_DB;
   const [rows, skips] = await Promise.all([
     listSeriesBookingDates(db, tenant.Id, series.Id),
