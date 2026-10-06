@@ -662,7 +662,7 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
   /**
    * The other half of "EstCost is re-stamped": a stay already PAID FOR, then shortened. `EstCost`
    * drops, the row returns to 'pending', and the money already banked exceeds what the booking may
-   * keep. `OUTSTANDING_WHERE_SQL` asks only whether something is still OWED, so before this the
+   * keep. `outstandingWhereSql` asks only whether something is still OWED, so before this the
    * $150 of over-payment appeared on no screen at all — and after re-confirmation `100 > 250` is
    * false, so it never came back as outstanding either. The Earnings page names it instead.
    */

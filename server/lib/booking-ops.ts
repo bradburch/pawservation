@@ -83,6 +83,7 @@ import { isEmailConfigured, sendCancellationNoticeToSitter } from './email';
 import { DEMO_EMAIL } from './demo';
 import { phoneOnFile, validatePhone } from './phone';
 import { isUniqueViolation } from './db-errors';
+import { tenantToday } from './tenant-today';
 import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './booking-times';
 import {
   isValidPetCount,
@@ -1744,7 +1745,7 @@ function emptyAccount(accountId: string | null): MyAccountBalance {
  * REUSES rather than reimplements: `getHouseholdDetailForOwner` resolves the caller's household by
  * the SAME union-find `buildAccounts` graph every household read uses and then reads it through
  * the SAME `householdDetailFor` the admin drill-down (`GET /:slug/admin/accounts/:accountId`)
- * goes through — same SQL, same `CREDITABLE_AMOUNT_SQL`, same rounding. A second "what does this
+ * goes through — same SQL, same `creditableAmountSql`, same rounding. A second "what does this
  * household owe" formula here would be exactly the drift `src/shared/invoicing/balances.ts`'s own
  * docblock warns against.
  *
@@ -1771,6 +1772,7 @@ export async function getMyAccount(ctx: BookingOpsContext): Promise<OpResult<MyA
     env.PAWSERVATION_DB,
     tenant.Id,
     endUserId,
+    tenantToday(tenant),
   );
   return ok(detail ? toMyAccountBalance(accountId, detail) : emptyAccount(accountId));
 }

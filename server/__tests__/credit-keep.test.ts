@@ -15,7 +15,7 @@ import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
 /**
  * CLOSING OUT AN OVER-PAYMENT.
  *
- * The credit itself is only a display: `CREDIT_WHERE_SQL` surfaces money the client no longer owes,
+ * The credit itself is only a display: `creditWhereSql` surfaces money the client no longer owes,
  * and until now it displayed forever with no way to resolve it. Two things resolve one in real life,
  * and the two must be kept apart because they mean opposite things about the sitter's revenue:
  *
@@ -28,7 +28,7 @@ import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
  *     figure can never disagree with the figure she was shown and is never client-supplied (the same
  *     doctrine as the cancellation fee).
  *
- * `insertPayment`'s guard and `OUTSTANDING_WHERE_SQL` must agree in both directions; this is the
+ * `insertPayment`'s guard and `outstandingWhereSql` must agree in both directions; this is the
  * mirror of that rule, on the credit side. Every action the Earnings page offers on a credit row has
  * to actually CLOSE it — which is why a DECLINED booking (`Keepable` is 0 by rule, and a charge
  * cannot raise it) refuses the keep path outright and the payload says so up front (`canKeep`).

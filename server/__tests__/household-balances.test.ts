@@ -238,7 +238,7 @@ describe('getHouseholdBalances (repo)', () => {
     await pay(env, TENANT_C, jensBooking, 4000);
     await book(env, TENANT_C, { endUserId: sam.Id, petIds: [rex], estCost: 6000 });
 
-    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     expect(households).toHaveLength(1);
     expect(households[0]).toMatchObject({
       accountId: rex,
@@ -268,7 +268,7 @@ describe('getHouseholdBalances (repo)', () => {
       amount: 4500,
     });
     await pay(env, TENANT_C, bookingId, 20000);
-    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     expect(household).toMatchObject({
       expectedTotalCents: 14500,
       paidTotalCents: 20000,
@@ -299,7 +299,7 @@ describe('getHouseholdBalances (repo)', () => {
     });
     await pay(env, TENANT_C, declined, 2500); // a deposit, taken before she said no
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined');
-    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     // $30 owed on the cancellation, nothing owed on the declined request, $25 of her money held.
     expect(household).toMatchObject({
       expectedTotalCents: 3000,
@@ -331,7 +331,7 @@ describe('getHouseholdBalances (repo)', () => {
       estCost: 25000,
     });
     await pay(env, TENANT_C, bookingId, 8750);
-    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const [household] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     expect(household).toMatchObject({
       expectedTotalCents: 25000,
       paidTotalCents: 8750,
@@ -349,8 +349,8 @@ describe('getHouseholdBalances (repo)', () => {
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     await book(env, TENANT_C, { endUserId: ana.Id, petIds: [mia] });
-    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toHaveLength(1);
-    const other = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_B);
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06')).toHaveLength(1);
+    const other = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_B, '2026-10-06');
     expect(other.some((h) => h.accountId === mia)).toBe(false);
     expect(other.flatMap((h) => h.owners.map((o) => o.email))).not.toContain('ana@example.com');
   });

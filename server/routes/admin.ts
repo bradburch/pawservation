@@ -140,6 +140,7 @@ import {
 } from '../lib/services';
 import { decryptToken } from '../lib/token-crypto';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
+import { tenantToday } from '../lib/tenant-today';
 import {
   isVenmoTxnId,
   MAX_VENMO_ROWS,
@@ -3040,7 +3041,12 @@ export const adminRoutes = new Hono<AppEnv>()
    */
   .post('/:slug/admin/bookings/:id/credit/keep', async (c) => {
     const tenant = c.get('tenant');
-    const result = await keepBookingCredit(c.env.PAWSERVATION_DB, tenant.Id, c.req.param('id'));
+    const result = await keepBookingCredit(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      c.req.param('id'),
+      tenantToday(tenant),
+    );
     switch (result.outcome) {
       case 'kept':
         return c.json({ keptCents: result.amount });
@@ -3171,8 +3177,7 @@ export const adminRoutes = new Hono<AppEnv>()
     // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET, nor
     // for a lapsed plan under enforcement — see `calendarWritesAllowed`.
     if (calendarWritesAllowed(c.env, tenant)) await reconcileIfStale(c.env, tenant);
-    const today = getPacificDateStr(undefined, tenant.Timezone ?? undefined);
-    const data = await getAnalytics(c.env.PAWSERVATION_DB, tenant.Id, today);
+    const data = await getAnalytics(c.env.PAWSERVATION_DB, tenant.Id, tenantToday(tenant));
     return c.json(serializeAnalytics(data));
   })
 
@@ -3468,7 +3473,7 @@ export const adminRoutes = new Hono<AppEnv>()
    * per-booking figure, computed inside its read from the same numbers the household balance is
    * built from, rather than subtracted here or trusted from anywhere else. This is the fix a prior review asked for:
    * `getHouseholdDetail` also lists `declined` bookings, whose `expectedCents` is zeroed by
-   * `CREDITABLE_AMOUNT_SQL` but which can still carry a payment recorded before they were
+   * `creditableAmountSql` but which can still carry a payment recorded before they were
    * declined (`insertPayment` allows it while a booking is still pending) — leaving a NEGATIVE
    * outstanding. Handing that straight to `proposeAttribution` would trip its own
    * unreadable-amount guard and refuse the household's ENTIRE credit, not just skip the one
@@ -3539,7 +3544,12 @@ export const adminRoutes = new Hono<AppEnv>()
       credits: Awaited<ReturnType<typeof listPaymentsForAccount>>;
     }[] = [];
     if (requestedAccountId !== undefined) {
-      const detail = await getHouseholdDetail(c.env.PAWSERVATION_DB, tenant.Id, requestedAccountId);
+      const detail = await getHouseholdDetail(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        requestedAccountId,
+        tenantToday(tenant),
+      );
       if (!detail) return c.json({ error: 'Not found.' }, 404);
       const credits = await listPaymentsForAccount(
         c.env.PAWSERVATION_DB,
@@ -3548,7 +3558,11 @@ export const adminRoutes = new Hono<AppEnv>()
       );
       if (credits.length > 0) targets.push({ accountId: detail.accountId, detail, credits });
     } else {
-      const candidates = await getHouseholdsWithUnappliedCredits(c.env.PAWSERVATION_DB, tenant.Id);
+      const candidates = await getHouseholdsWithUnappliedCredits(
+        c.env.PAWSERVATION_DB,
+        tenant.Id,
+        tenantToday(tenant),
+      );
       for (const { accountId, detail, credits } of candidates)
         targets.push({ accountId, detail, credits });
     }
@@ -4074,7 +4088,12 @@ export const adminRoutes = new Hono<AppEnv>()
     const skipped: { paymentId: string; reason: string }[] = [];
     for (const attribution of attributions) {
       try {
-        const result = await applyAttribution(c.env.PAWSERVATION_DB, tenant.Id, attribution);
+        const result = await applyAttribution(
+          c.env.PAWSERVATION_DB,
+          tenant.Id,
+          attribution,
+          tenantToday(tenant),
+        );
         if (result.ok) applied++;
         else skipped.push({ paymentId: attribution.paymentId, reason: result.reason });
       } catch (err) {
@@ -4354,7 +4373,7 @@ export const adminRoutes = new Hono<AppEnv>()
    *
    * The route itself never decides EstCost vs. CancellationFee — `updateBackfilledBookingCost`
    * writes into whichever column the row's own Status says the balance reads, so a cancelled
-   * adoption's correction lands where `BASE_AMOUNT_SQL` actually looks for it.
+   * adoption's correction lands where `baseAmountSql` actually looks for it.
    */
   .patch('/:slug/admin/bookings/:id/cost', async (c) => {
     const tenant = c.get('tenant');

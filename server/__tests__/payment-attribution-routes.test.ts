@@ -385,7 +385,7 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
   it('a declined booking is NOT offered as a candidate', async () => {
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
-    // Paid while pending, then declined: expected drops to 0 (CREDITABLE_AMOUNT_SQL zeroes a
+    // Paid while pending, then declined: expected drops to 0 (creditableAmountSql zeroes a
     // declined booking) while its $50 payment stands, so its outstanding is NEGATIVE — exactly
     // the case that must never reach proposeAttribution, whose own guard would otherwise refuse
     // the whole credit as an unreadable amount instead of simply skipping this booking.
@@ -1339,7 +1339,12 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
     const second = (await credit(env, home.accountId, 40, '2026-06-02'))!;
     const third = (await credit(env, home.accountId, 40, '2026-06-03'))!;
 
-    const before = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const before = await getHouseholdDetail(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      home.accountId,
+      '2026-10-06',
+    );
 
     // The sitter unticks the proposed credit (the nearest one, `third`) and sends the one she
     // knows actually paid the stay. Nothing about the request is special — it is the ordinary
@@ -1361,7 +1366,12 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
     const rows = paymentRows(raw);
     expect(rows.filter((r) => r.BookingRequestId === bookingId)).toHaveLength(1);
     expect(rows.find((r) => r.BookingRequestId === bookingId)?.Amount).toBe(4000); // cents
-    const after = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const after = await getHouseholdDetail(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      home.accountId,
+      '2026-10-06',
+    );
     expect(after?.balanceCents).toBe(before?.balanceCents);
 
     // And now there is genuinely nothing left: both survivors report no candidates, so they fall
@@ -1721,7 +1731,12 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const bookingId = await book(env, home, 100, '2026-07-01');
     const paymentId = (await credit(env, home.accountId, 100))!;
 
-    const before = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const before = await getHouseholdDetail(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      home.accountId,
+      '2026-10-06',
+    );
     expect(before?.balanceCents).toBe(0); // fully covered by the household-level credit already
 
     const attribution: ApplyAttributionInput = {
@@ -1735,7 +1750,12 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const body = (await res.json()) as ApplyBody;
     expect(body).toEqual({ applied: 1, skipped: [] });
 
-    const after = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const after = await getHouseholdDetail(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      home.accountId,
+      '2026-10-06',
+    );
     expect(after?.balanceCents).toBe(before?.balanceCents);
 
     const rows = paymentRows(raw);
@@ -1957,7 +1977,12 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     const rows = paymentRows(raw);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ BookingRequestId: walk, AccountId: null, Amount: 5000 });
-    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const detail = await getHouseholdDetail(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      home.accountId,
+      '2026-10-06',
+    );
     expect(detail?.balanceCents).toBe(0);
   });
 
@@ -2155,7 +2180,12 @@ describe('POST /:slug/admin/payments/attribute/apply', () => {
     // $100 expected, $200 paid ($100 on the booking + the second credit still sitting unclaimed at
     // the household level) — genuinely $100 in the household's favor, not zeroed out. The point is
     // this reads as an honest credit, not as an invisible $100 the booking silently absorbed twice.
-    const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, home.accountId);
+    const detail = await getHouseholdDetail(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      home.accountId,
+      '2026-10-06',
+    );
     expect(detail?.balanceCents).toBe(-10000); // getHouseholdDetail returns cents (0015)
   });
 
@@ -2321,7 +2351,7 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
     const seqThird = (await credit(env, seq.accountId, 40, '2026-06-03'))!;
 
     // A household whose declined booking still carries the $50 it took while pending: `Expected`
-    // in the bulk query must stay `CREDITABLE_AMOUNT_SQL` (zeroed once declined), the same rule
+    // in the bulk query must stay `creditableAmountSql` (zeroed once declined), the same rule
     // `householdDetailFor` uses, or this booking's outstanding goes from -50 (never a candidate)
     // to 50 (offered as one) — exactly the defect the single-account test above ("a declined
     // booking is NOT offered as a candidate") already covers for the per-household path. `p_wdc`

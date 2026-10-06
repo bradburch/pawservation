@@ -41,7 +41,7 @@ export function serializeAnalytics(data: AnalyticsData) {
    * can leave a client in credit becomes visible: `creditCents` is `paidTotalCents - keepableCents`,
    * the same one-rule arithmetic the outstanding row's `balanceCents` uses, read in the other
    * direction. There is deliberately no *Record payment* affordance on these rows (see
-   * `CREDIT_WHERE_SQL`): a credit is a negative balance, not a payable one — the *resolution*
+   * `creditWhereSql`): a credit is a negative balance, not a payable one — the *resolution*
    * affordances are `credit/keep` (the client agreed she keeps it) and correcting the payment
    * ledger (the money went back). See `keepBookingCredit`.
    */
@@ -57,7 +57,7 @@ export function serializeAnalytics(data: AnalyticsData) {
     creditCents: c.PaidTotal - c.Keepable,
     /**
      * Can this credit be closed by KEEPING it (`POST /credit/keep` logs it as a charge), or only by
-     * refunding it? A `'declined'` request may keep nothing at all — `CREDITABLE_AMOUNT_SQL` is 0
+     * refunding it? A `'declined'` request may keep nothing at all — `creditableAmountSql` is 0
      * for it by rule, so a charge cannot close its credit — and offering a button that does not work
      * is the mirror of the "balance whose *Record payment* 404s" defect the outstanding pairing
      * exists to prevent. Derived here from the SAME status rule the SQL applies, so the client never
@@ -99,7 +99,7 @@ export function serializeAnalytics(data: AnalyticsData) {
     credits,
     /**
      * HOUSEHOLD BALANCES, PASSED THROUGH WHOLE — the row `getHouseholdBalances` computed, over the
-     * same `CREDITABLE_AMOUNT_SQL` the two lists above are built from, published unchanged. There
+     * same `creditableAmountSql` the two lists above are built from, published unchanged. There
      * is deliberately nothing to map: a balance is money, money is server-side, and a client that
      * re-added the numbers could disagree with the page it is printed on.
      *

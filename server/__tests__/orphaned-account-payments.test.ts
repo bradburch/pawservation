@@ -121,7 +121,7 @@ describe('a payment whose anchor pet dies stays in its household (repo)', () => 
     await jenWithAPaymentAnchoredOnAlpha(env, raw);
     expect(await setPetDeceased(env.PAWSERVATION_DB, TENANT_C, 'p_alpha', true)).toBe(true);
 
-    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C);
+    const households = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     expect(households).toHaveLength(1);
     // The household is now named p_beta (p_alpha holds no live edge), and still holds the money.
     expect(households[0]).toMatchObject({
@@ -130,7 +130,9 @@ describe('a payment whose anchor pet dies stays in its household (repo)', () => 
       paidTotalCents: 40000,
       balanceCents: 10000,
     });
-    expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C)).toEqual([]);
+    expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C, '2026-10-06')).toEqual(
+      [],
+    );
   });
 
   it('still LISTS that payment in the drill-down, under the old account id and the new one', async () => {
@@ -139,7 +141,12 @@ describe('a payment whose anchor pet dies stays in its household (repo)', () => 
     await setPetDeceased(env.PAWSERVATION_DB, TENANT_C, 'p_alpha', true);
 
     for (const accountId of ['p_alpha', 'p_beta']) {
-      const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, accountId);
+      const detail = await getHouseholdDetail(
+        env.PAWSERVATION_DB,
+        TENANT_C,
+        accountId,
+        '2026-10-06',
+      );
       expect(detail, `drill-down for ${accountId}`).not.toBeNull();
       expect(detail!.householdPayments).toEqual([
         expect.objectContaining({ id: paymentId, amountCents: 40000 }),
@@ -174,7 +181,7 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     expect(await deleteCustomer(env.PAWSERVATION_DB, TENANT_C, ana.Id)).toBe('deleted');
 
     // The row is still in Payments — the delete never touched it — so it MUST be visible somewhere.
-    expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C)).toEqual([
+    expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C, '2026-10-06')).toEqual([
       { accountId: 'p_ana', totalCents: 25000 },
     ]);
   });
@@ -203,14 +210,16 @@ describe('a payment whose anchor pet is DELETED is surfaced, never silently drop
     // Surfacing an orphan the sitter cannot then correct would leave it on the page forever.
     // Re-record it against the right household, then delete the stray — this is the delete.
     expect(await deleteAccountPayment(env.PAWSERVATION_DB, TENANT_C, 'p_ana', orphan!)).toBe(true);
-    expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C)).toEqual([]);
+    expect(await getOrphanedAccountPayments(env.PAWSERVATION_DB, TENANT_C, '2026-10-06')).toEqual(
+      [],
+    );
 
     // The orphan's id is NOT a skeleton key: it reaches its own payment and nothing else, and a
     // household that still exists is still only reachable through its own id.
     expect(await deleteAccountPayment(env.PAWSERVATION_DB, TENANT_C, 'p_ana', jensPayment!)).toBe(
       false,
     );
-    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C)).toEqual([
+    expect(await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06')).toEqual([
       expect.objectContaining({ paidTotalCents: 40000 }),
     ]);
   });

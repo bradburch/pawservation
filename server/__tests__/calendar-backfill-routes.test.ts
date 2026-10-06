@@ -532,7 +532,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     expect(petIds).toEqual(['pet_sp_bella']);
   });
 
-  // Regression: BASE_AMOUNT_SQL reads CancellationFee (not EstCost)
+  // Regression: baseAmountSql reads CancellationFee (not EstCost)
   // for a cancelled row, so a [CANCELLED]-marked event must land its price there too, or the
   // household balance silently doesn't move even though the row imported "successfully".
   it('an imported [CANCELLED] event contributes its price to the household balance', async () => {
@@ -544,7 +544,7 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
       ]),
     );
 
-    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const before = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, '2026-10-06');
     const beforeTotal =
       before.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotalCents ?? 0;
 
@@ -556,11 +556,11 @@ describe('POST /:slug/admin/calendar/backfill/import', () => {
     const row = await getBooking(env, 'ev_bella_cancelled');
     expect(row).toMatchObject({ Status: 'cancelled', EstCost: 2000, CancellationFee: 2000 });
 
-    const after = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A);
+    const after = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_A, '2026-10-06');
     const afterTotal =
       after.find((h) => h.petIds.includes('pet_sp_bella'))?.expectedTotalCents ?? 0;
     // Before the fix this delta was 0: insertBackfilledBooking never set CancellationFee, so a
-    // cancelled row's price was invisible to BASE_AMOUNT_SQL no matter what EstCost held.
+    // cancelled row's price was invisible to baseAmountSql no matter what EstCost held.
     expect(afterTotal - beforeTotal).toBe(2000); // cents (0015): $20
   });
 
