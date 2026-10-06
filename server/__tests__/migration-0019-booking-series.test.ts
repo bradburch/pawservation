@@ -23,12 +23,23 @@ function cut(sql: string): string {
     out = out.slice(0, from) + out.slice(to + END.length + 1);
   }
 }
-const db = (sql: string) => { const raw = new DatabaseSync(':memory:'); raw.exec(sql); return raw; };
+const db = (sql: string) => {
+  const raw = new DatabaseSync(':memory:');
+  raw.exec(sql);
+  return raw;
+};
 const tables = (raw: DatabaseSync) =>
-  (raw.prepare("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND name LIKE '%Series%' AND sql IS NOT NULL ORDER BY name").all() as { name: string; sql: string }[])
-    .map((r) => ({ name: r.name, sql: r.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /g, '') }));
+  (
+    raw
+      .prepare(
+        "SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND name LIKE '%Series%' AND sql IS NOT NULL ORDER BY name",
+      )
+      .all() as { name: string; sql: string }[]
+  ).map((r) => ({ name: r.name, sql: r.sql.replace(/\s+/g, ' ').replace(/IF NOT EXISTS /g, '') }));
 const bookingCols = (raw: DatabaseSync) =>
-  (raw.prepare('PRAGMA table_info(BookingRequests)').all() as { name: string }[]).map((c) => c.name).sort();
+  (raw.prepare('PRAGMA table_info(BookingRequests)').all() as { name: string }[])
+    .map((c) => c.name)
+    .sort();
 
 describe('migration 0019 — the file', () => {
   it('contains no transaction statement', () => {
@@ -59,16 +70,26 @@ describe('migration 0019 — applied to the live shape', () => {
   it('refuses a second row for one series on one date, and allows many single bookings on it', () => {
     const raw = db(SCHEMA);
     raw.exec(`INSERT INTO Tenants (Id, Slug, DisplayName) VALUES ('t','t','T');`);
-    const ins = (id: string, series: string | null) => raw.prepare(
-      `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, PetCount, Status, SeriesId, CreatedAt)
-       VALUES (?, 't', 'walk', '2026-11-03', 1, 'pending', ?, '2026-10-01')`).run(id, series);
-    ins('a', null); ins('b', null); ins('c', 's1');
+    const ins = (id: string, series: string | null) =>
+      raw
+        .prepare(
+          `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, PetCount, Status, SeriesId, CreatedAt)
+       VALUES (?, 't', 'walk', '2026-11-03', 1, 'pending', ?, '2026-10-01')`,
+        )
+        .run(id, series);
+    ins('a', null);
+    ins('b', null);
+    ins('c', 's1');
     expect(() => ins('d', 's1')).toThrow(/UNIQUE/);
   });
   it('refuses an unknown skip reason and a weekday mask outside 1–127', () => {
     const raw = db(SCHEMA);
-    expect(() => raw.exec(`INSERT INTO BookingSeriesSkips VALUES ('s','t','2026-11-03','sick','x')`)).toThrow(/CHECK/);
-    expect(() => raw.exec(`INSERT INTO BookingSeries (Id, TenantId, EndUserId, ServiceType, Weekdays, StartDate, Status, CreatedBy, CreatedAt, UpdatedAt)
-      VALUES ('s','t','u','walk',128,'2026-11-03','pending','client','x','x')`)).toThrow(/CHECK/);
+    expect(() =>
+      raw.exec(`INSERT INTO BookingSeriesSkips VALUES ('s','t','2026-11-03','sick','x')`),
+    ).toThrow(/CHECK/);
+    expect(() =>
+      raw.exec(`INSERT INTO BookingSeries (Id, TenantId, EndUserId, ServiceType, Weekdays, StartDate, Status, CreatedBy, CreatedAt, UpdatedAt)
+      VALUES ('s','t','u','walk',128,'2026-11-03','pending','client','x','x')`),
+    ).toThrow(/CHECK/);
   });
 });

@@ -11,11 +11,25 @@
  */
 import { addDays, addMonths, DATE_RE, parseDateUtc } from '../../src/shared/util/dates';
 
-export const SKIP_REASONS = ['full', 'time_off', 'unpriced_pet_set', 'cost_out_of_range',
-  'unavailable', 'paused', 'cancelled'] as const;
+export const SKIP_REASONS = [
+  'full',
+  'time_off',
+  'unpriced_pet_set',
+  'cost_out_of_range',
+  'unavailable',
+  'paused',
+  'cancelled',
+] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
-export const WEEKDAY_NAMES = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday',
-  'saturday', 'sunday'] as const;
+export const WEEKDAY_NAMES = [
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+] as const;
 export type WeekdayName = (typeof WEEKDAY_NAMES)[number];
 export const DEFAULT_SERIES_WINDOW_MONTHS = 12;
 export const PROJECTION_MAX_MONTHS = 24;
@@ -35,7 +49,8 @@ export function maskFromNames(names: readonly string[]): number | null {
 }
 
 export function namesFromMask(mask: number): WeekdayName[] {
-  if (!Number.isInteger(mask) || mask < 0 || mask > 127) throw new RangeError(`weekday mask ${mask}`);
+  if (!Number.isInteger(mask) || mask < 0 || mask > 127)
+    throw new RangeError(`weekday mask ${mask}`);
   return WEEKDAY_NAMES.filter((_, i) => (mask & (1 << i)) !== 0);
 }
 
@@ -54,7 +69,11 @@ export function datesIn(rule: SeriesRule, fromInclusive: string, toInclusive: st
   return out;
 }
 
-export function windowEnd(today: string, maxAdvanceMonths: number | null, endDate: string | null): string {
+export function windowEnd(
+  today: string,
+  maxAdvanceMonths: number | null,
+  endDate: string | null,
+): string {
   const horizon = addMonths(today, maxAdvanceMonths ?? DEFAULT_SERIES_WINDOW_MONTHS);
   return endDate !== null && endDate < horizon ? endDate : horizon;
 }
@@ -73,8 +92,10 @@ export function parseProjectedId(id: string): { seriesId: string; date: string }
 
 const DAY = (n: WeekdayName) => n[0].toUpperCase() + n.slice(1);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const short = (date: string) => `${Number(date.slice(8, 10))} ${MONTHS[Number(date.slice(5, 7)) - 1]}`;
-const list = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+const short = (date: string) =>
+  `${Number(date.slice(8, 10))} ${MONTHS[Number(date.slice(5, 7)) - 1]}`;
+const list = (xs: string[]) =>
+  xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
 
 export function patternWords(rule: SeriesRule): string {
   const days = list(namesFromMask(rule.weekdays).map(DAY));
