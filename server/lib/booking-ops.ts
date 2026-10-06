@@ -1088,12 +1088,14 @@ export async function cancelBooking(
   );
   if (!cancelled) return notCancellable();
 
-  // Best-effort calendar mirror — never blocks or fails the cancellation. SyncPending is already
-  // set by the UPDATE above, so a Google failure just leaves the push for the next cron sweep.
   if (booking.SeriesId) {
-    // A series walk has no event of its own: mark its series instead.
-    await armSeriesSync(env.PAWSERVATION_DB, tenant.Id, booking.SeriesId);
+    // A series walk has no event of its own: mark its series instead (best-effort, like the push).
+    await armSeriesSync(env.PAWSERVATION_DB, tenant.Id, booking.SeriesId).catch((err) => {
+      console.error('series re-arm failed', err);
+    });
   } else if (booking.GCalEventId) {
+    // Best-effort calendar mirror — never blocks or fails the cancellation. SyncPending is already
+    // set by the UPDATE above, so a Google failure just leaves the push for the next cron sweep.
     const eventId = booking.GCalEventId;
     await background(
       ctx,
@@ -1455,16 +1457,18 @@ export async function editBooking(
     console.error('saving intake answers failed', err);
   });
 
+  if (booking.SeriesId) {
+    // A series walk has no event of its own: mark its series instead (best-effort, like the push).
+    await armSeriesSync(env.PAWSERVATION_DB, tenant.Id, booking.SeriesId).catch((err) => {
+      console.error('series re-arm failed', err);
+    });
+    return ok({ id, estCostCents, status: 'pending' as const });
+  }
   // Mirror to Google: MOVE the event to the new dates and retitle it `[REQUEST] …` (the update
   // path derives the title from `status: 'pending'`). A booking with no event yet — one taken
   // before the sitter connected Google — gets one created, which is what `syncBookingToCalendar`
   // does and what the outbox would do on the next sweep anyway. `SyncPending` is already set by
   // the UPDATE above, so a Google failure only delays the mirror.
-  if (booking.SeriesId) {
-    // A series walk has no event of its own: mark its series instead.
-    await armSeriesSync(env.PAWSERVATION_DB, tenant.Id, booking.SeriesId);
-    return ok({ id, estCostCents, status: 'pending' as const });
-  }
   await background(
     ctx,
     (async () => {
@@ -1519,7 +1523,7 @@ export type MyBooking = {
   editable: boolean;
   feeIfCancelledTodayCents: number | null;
   status: string;
-  /** The series this booking belongs to (0019); null = a single booking. */
+  /** The series this booking belongs to (0019_booking_series); null = a single booking. */
   seriesId: string | null;
 };
 

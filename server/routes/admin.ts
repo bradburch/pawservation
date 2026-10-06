@@ -2902,7 +2902,9 @@ export const adminRoutes = new Hono<AppEnv>()
     const retitle = keepsCalendarEventOnCancel('cancelled', fee ?? null) && status === 'cancelled';
     if (booking?.SeriesId) {
       // A series walk has no event of its own: mark its series, and let the series' mirror move.
-      await armSeriesSync(c.env.PAWSERVATION_DB, tenant.Id, booking.SeriesId);
+      await armSeriesSync(c.env.PAWSERVATION_DB, tenant.Id, booking.SeriesId).catch((err) => {
+        console.error('series re-arm failed', err);
+      });
     } else if (status === 'confirmed' || retitle) {
       // Confirm: retitle the existing event (drop the [REQUEST] marker), or — if the booking has
       // NO event yet (booked before the calendar was connected, or a Google outage swallowed the

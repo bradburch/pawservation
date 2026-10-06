@@ -681,7 +681,7 @@ export async function insertBookingRequest(
     answers?: Record<string, string>;
     source?: string | null;
     idempotencyKey?: string | null;
-    /** The series this walk belongs to (0019); undefined/null = a single booking. */
+    /** The series this walk belongs to (0019_booking_series); undefined/null = a single booking. */
     seriesId?: string | null;
     /** 1 (the default) arms the calendar outbox for this row; a series walk passes 0, because
      *  the series' own calendar event already carries it. */
@@ -5367,14 +5367,17 @@ export async function removeEndUserPet(
   tenantId: string,
   petId: string,
 ): Promise<'removed' | 'not-found' | 'has-bookings'> {
-  const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = ?)`;
+  // A pet on a series (BookingSeriesPets) is as undeletable as one on a booking: refuse cleanly
+  // rather than trip the foreign key.
+  const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = ?)
+    AND NOT EXISTS (SELECT 1 FROM BookingSeriesPets bsp WHERE bsp.PetId = ?)`;
   const [, petResult] = await db.batch([
     db
       .prepare(`DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ? AND ${bookingGuard}`)
-      .bind(tenantId, petId, petId),
+      .bind(tenantId, petId, petId, petId),
     db
       .prepare(`DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ? AND ${bookingGuard}`)
-      .bind(tenantId, petId, petId),
+      .bind(tenantId, petId, petId, petId),
   ]);
   if ((petResult.meta as { changes?: number }).changes !== 0) return 'removed';
   // Refused, and nothing was written. One read to choose which refusal it was: a pet that is not

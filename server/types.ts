@@ -252,7 +252,7 @@ export type BookingRow = {
    * today — no query selects it; it exists for the out-of-tree booking MCP and future reporting. */
   Source?: string | null;
   CreatedAt: string;
-  /** The series this booking was materialized from (0019); null = a single booking. */
+  /** The series this booking was materialized from (0019_booking_series); null = a single booking. */
   SeriesId: string | null;
 };
 
