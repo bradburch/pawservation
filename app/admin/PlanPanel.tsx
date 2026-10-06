@@ -201,7 +201,8 @@ const OFFERS: PlanOffer[] = [
     interval: 'month',
     name: 'Pro',
     price: (pricing) => `$${pricing.proMonthly} a month`,
-    blurb: 'Everything in Solo, plus card payments through your own Stripe account.',
+    blurb:
+      'Everything in Solo, plus a booking assistant in chat and on WhatsApp, and card payments through your own Stripe account.',
   },
   {
     key: 'pro',

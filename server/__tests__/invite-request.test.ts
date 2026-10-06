@@ -234,7 +234,7 @@ describe('POST /request-invite', () => {
     const res = await postInvite(env, { ...VALID_FIELDS, website: 'no idea sorry' });
     expect(res.status).toBe(400);
     const html = await res.text();
-    expect(html).toContain('Website or social page (something like bradpaws.com)');
+    expect(html).toContain('Website or social page (something like yourbusiness.com)');
     // Still echoed back, escaped, so she is not retyping the whole form.
     expect(html).toContain('value="no idea sorry"');
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -247,13 +247,13 @@ describe('POST /request-invite', () => {
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
     // The common correct answer: no https://, no trailing slash. A strict URL parse would 400 it.
-    const res = await postInvite(env, { ...VALID_FIELDS, website: 'bradpaws.com' });
+    const res = await postInvite(env, { ...VALID_FIELDS, website: 'yourbusiness.com' });
     expect(res.status).toBe(303);
     expect(res.headers.get('Location')).toBe('/request-invite/thanks');
     const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { text: string; html: string };
-    expect(body.text).toContain('Website: bradpaws.com');
-    expect(body.html).toContain('bradpaws.com');
+    expect(body.text).toContain('Website: yourbusiness.com');
+    expect(body.html).toContain('yourbusiness.com');
   });
 
   it('a Facebook page is an acceptable website answer', async () => {
@@ -264,12 +264,12 @@ describe('POST /request-invite', () => {
       .mockResolvedValue(new Response('{}', { status: 200 }));
     const res = await postInvite(env, {
       ...VALID_FIELDS,
-      website: 'facebook.com/bradpaws',
+      website: 'facebook.com/yourbusiness',
     });
     expect(res.status).toBe(303);
     const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { text: string };
-    expect(body.text).toContain('Website: facebook.com/bradpaws');
+    expect(body.text).toContain('Website: facebook.com/yourbusiness');
   });
 
   it('the rate limit is charged ONLY on valid submissions: five invalid posts do not burn the cap, and five subsequent valid posts all succeed', async () => {

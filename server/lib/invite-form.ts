@@ -56,7 +56,7 @@ export function renderInviteForm(values: InviteFormValues = {}): string {
               </div>
               <div class="invite-field">
                 <label for="inv-website">Website or social page</label>
-                <input id="inv-website" name="website" type="text" maxlength="200" required autocomplete="url" placeholder="bradpaws.com, or your Facebook or Instagram page" value="${esc(values.website)}" />
+                <input id="inv-website" name="website" type="text" maxlength="200" required autocomplete="url" placeholder="yourbusiness.com, or your Facebook or Instagram page" value="${esc(values.website)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-city">City</label>
@@ -85,7 +85,7 @@ export function renderInviteForm(values: InviteFormValues = {}): string {
                 <input id="inv-fax" name="fax" type="text" tabindex="-1" aria-hidden="true" autocomplete="one-time-code" />
               </div>
               <div class="invite-submit">
-                <button class="btn btn-inverse" type="submit">Ask for an invite</button>
+                <button class="btn btn-inverse" type="submit">Request a sign-up link</button>
                 <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
               </div>
             </form>`;

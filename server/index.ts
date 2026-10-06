@@ -363,7 +363,7 @@ const LANDING_HTML = `<!doctype html>
     ${pageHead(
       '/',
       'Pet Sitting &amp; Dog Walking Software | Pawservation',
-      `Booking software for pet sitters and dog walkers, from $${PRICING.soloMonthly} a month. Put a booking page on your own website: your services and rates, your availability rules, client and pet records, payments and what you&rsquo;re owed, and two-way Google Calendar sync.`,
+      `Booking software for pet sitters and dog walkers, from $${PRICING.soloMonthly} a month, that answers your clients&rsquo; routine questions so you can spend your day on the pets. Clients book on your own website or from a link you send them, so no website is needed, and on Pro they can book by WhatsApp. You confirm every booking.`,
     )}
     ${buildProductJsonLdScript(BRAND_ORIGIN)}
     <style>${PAGE_STYLE}</style>
@@ -396,7 +396,7 @@ const LANDING_HTML = `<!doctype html>
           <a class="signin nav-tour" href="/how-it-works">Full tour</a>
           <a class="signin nav-signin" href="/admin">Sign in</a>
           <a class="signin" href="/demo">Try the demo</a>
-          <a class="btn btn-primary btn-sm" href="#invite-h">Ask for an invite</a>
+          <a class="btn btn-primary btn-sm" href="#invite-h">Sign up</a>
         </div>
       </div>
     </header>
@@ -410,14 +410,15 @@ const LANDING_HTML = `<!doctype html>
                  words are the pricing section's own heading, so the hero and section five cannot
                  drift apart, and every figure comes from PRICING rather than the markup. -->
             <p class="chip">$${PRICING.soloMonthly} a month for one sitter. ${PRICING.trialDays}-day free trial.</p>
-            <h1>Your booking page, on your own website.</h1>
+            <h1>Less time answering texts. More time with the pets.</h1>
             <p class="sub">
-              Pawservation is pet sitting and dog walking software. Your clients ask for the dates
-              they want on your own site, with your services and your rates, and you confirm each
-              request. It also keeps track of what every client owes you.
+              Pawservation is pet sitting and dog walking software. Your booking page answers the
+              questions clients ask you all day, like which days you&rsquo;re free and what a stay
+              costs, and on Pro a friendly assistant answers the rest, from moving a date to what
+              they owe. You still confirm every booking, so the relationship stays yours.
             </p>
             <div class="cta-row">
-              <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
+              <a class="btn btn-primary" href="#invite-h">Sign up</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
             <p class="note">
@@ -447,6 +448,62 @@ const LANDING_HTML = `<!doctype html>
                   <span class="req-no">Decline</span>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Who it is for, said once and plainly: one sitter or walker with a regular book of about
+           ten to twenty clients. Each card is something that sitter does today by text and what
+           changes, with no figure the product cannot back. A band, so the sections below keep
+           alternating. -->
+      <section class="section band" id="fit" aria-labelledby="fit-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Is this for you?</span>
+            <h2 id="fit-h">Made for a sitter with ten to twenty regular clients</h2>
+            <p>If you walk dogs or pet sit on your own, and most of your week is the same households asking the same questions, this is for you.</p>
+          </div>
+          <div class="features features-3">
+            <div class="feature">
+              <h3>&ldquo;Are you free the weekend of the 14th?&rdquo;</h3>
+              <p>Your clients see your open days for themselves, so the question never has to reach you.</p>
+            </div>
+            <div class="feature">
+              <h3>&ldquo;What would it be for both dogs?&rdquo;</h3>
+              <p>The price appears as they pick dates and pets, at the rates you set. A combination you haven&rsquo;t priced is never guessed at.</p>
+            </div>
+            <div class="feature">
+              <h3>&ldquo;Did I pay you for last week?&rdquo;</h3>
+              <p>Every household has one running balance, so you both see the same answer without scrolling back through texts.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Two first-class paths, not a website and a footnote: the booking page on her own site,
+           and no website at all. The link is the /embed/:slug page itself, the one og-booking.png
+           exists to unfurl when she texts it to a client. WhatsApp is the Pro half of the
+           no-website path, and the card says so. -->
+      <section class="section" id="ways" aria-labelledby="ways-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Website or not</span>
+            <h2 id="ways-h">Your clients book wherever they find you</h2>
+            <p>Put your booking page on your website, or skip the website. You don&rsquo;t need one, or any tech at all.</p>
+          </div>
+          <div class="features features-3">
+            <div class="feature">
+              <h3>On your own website</h3>
+              <p>Paste <a href="#install">one line</a> into Squarespace, Wix or whatever you already use, and your booking page appears there under your name.</p>
+            </div>
+            <div class="feature">
+              <h3>No website needed</h3>
+              <p>You get a booking page of your own at a link you can text or email to clients. They open it and book, and there is nothing to build or host.</p>
+            </div>
+            <div class="feature">
+              <h3>By WhatsApp, on Pro</h3>
+              <p>Clients just message your WhatsApp number. The assistant answers, takes the request, and sends it to you to confirm.</p>
             </div>
           </div>
         </div>
@@ -540,7 +597,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
+            <a class="btn btn-primary" href="#invite-h">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
         </div>
@@ -620,19 +677,60 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
+            <a class="btn btn-primary" href="#invite-h">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
         </div>
       </section>
 
-      <section class="section" id="pricing" aria-labelledby="pricing-h">
+      <!-- What Pro adds, as cards ahead of the prices. The assistant leads: it answers the routine
+           questions so the sitter is not answering them all day, and it never replaces her, since
+           every request still waits for her tap. Card payments are a card here and a bullet on the
+           price card, not the headline. Three cards on .features-3 for the reflow #clients uses.
+           The section is plain and #pricing below it is a band, so the page keeps alternating;
+           #install flipped to plain for the same reason. What these cards claim is the whole of
+           each integration: nothing about photos, reminders or the sitter chatting back, and no
+           number handed to her by us. -->
+      <section class="section" id="pro" aria-labelledby="pro-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Pro</span>
+            <h2 id="pro-h">A friendly assistant, and you still decide</h2>
+            <p>
+              On Pro, a booking assistant answers your clients in the chat on your booking page and
+              on your own WhatsApp number. It handles the routine questions and leaves every booking
+              for you to confirm with a tap.
+            </p>
+          </div>
+          <div class="features features-3">
+            <div class="feature">
+              <h3>Booking by WhatsApp</h3>
+              <p>Clients message your own WhatsApp number to book, get a quote, reschedule or cancel. Each new request reaches you as a WhatsApp alert with Confirm and Decline buttons, and your client hears the answer.</p>
+            </div>
+            <div class="feature">
+              <h3>The same assistant on your booking page</h3>
+              <p>The chat on your booking page is the same assistant, with your rates, your rules and your open dates, so clients get the same answers wherever they ask.</p>
+            </div>
+            <div class="feature">
+              <h3>Card payments through your own Stripe account</h3>
+              <p>Take deposits, let clients save a card, and have the balance charged after each stay. You pay Stripe&rsquo;s published rate and no fee to Pawservation.</p>
+            </div>
+          </div>
+          <div class="cta-row mid-cta">
+            <a class="btn btn-primary" href="#invite-h">Sign up</a>
+            <a class="btn btn-ghost" href="#pricing">See Pro pricing</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section band" id="pricing" aria-labelledby="pricing-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">Pricing</span>
             <h2 id="pricing-h">$${PRICING.soloMonthly} a month for one sitter</h2>
             <p>
-              Pro adds card payments, extra sitters and booking by chat, for
+              Pro adds a booking assistant in your page&rsquo;s chat and on WhatsApp, card
+              payments through your own Stripe account and extra sitters, for
               $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} a year.
             </p>
           </div>
@@ -655,7 +753,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Client accounts and pet records</li>
                 <li>Google Calendar sync, both directions</li>
               </ul>
-              <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
+              <a class="btn btn-primary" href="#invite-h">Sign up</a>
               <p class="note">The first ${PRICING.trialDays} days are free. New sitters are added by hand for now, so ask and we&rsquo;ll email you a sign-up link.</p>
             </div>
             <div class="price-card">
@@ -668,30 +766,31 @@ const LANDING_HTML = `<!doctype html>
               </p>
               <ul class="price-list">
                 <li>Everything in Solo</li>
-                <li>AI concierge: clients check availability and book by chat</li>
+                <li>Booking by WhatsApp: clients book, get quotes, reschedule and cancel by messaging your own number, and you confirm or decline each new request from a WhatsApp alert</li>
+                <li>A booking assistant in your page&rsquo;s chat: clients check availability, get a quote and book</li>
                 <li>Connect an AI assistant such as Claude to check availability and book for you</li>
                 <li>Back-office assistant: ask who owes you and what your week looks like</li>
                 <li>Card payments through your own Stripe account: deposits, saved cards, and the balance charged after each stay, at Stripe&rsquo;s published rate with no fee from Pawservation</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
-              <a class="btn btn-primary" href="#invite-h">Ask for an invite</a>
+              <a class="btn btn-primary" href="#invite-h">Sign up</a>
               <p class="note">$${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, which is $${PRICING.proMonthly * 12 - PRICING.proAnnual} less than paying by the month.</p>
             </div>
           </div>
           <p class="note wf-more">
-            <a href="#invite-h">Ask for an invite</a> and we&rsquo;ll get you started.
+            <a href="#invite-h">Sign up</a> and we&rsquo;ll get you started.
           </p>
         </div>
       </section>
 
-      <section class="section band" id="install" aria-labelledby="install-h">
+      <section class="section" id="install" aria-labelledby="install-h">
         <div class="wrap install-grid">
           <div class="install-copy">
             <span class="label">Install</span>
             <h2 id="install-h">One line on any website</h2>
             <p>Paste it into Squarespace, Wix or whatever you already use, swap in your business&rsquo;s short name, and save. It sizes itself to fit the page.</p>
             <p>It is safe on a public page, because only your clients can book. Anyone else gets a welcome under your name and a sign-in box.</p>
-            <p>Forward this box to whoever edits your site.</p>
+            <p>Forward this box to whoever edits your site. No site? Skip this step and send clients your booking link instead.</p>
           </div>
           <div class="codecard">
             <div class="codecard-cap">
@@ -710,8 +809,8 @@ const LANDING_HTML = `<!doctype html>
       <section class="cta-band" aria-labelledby="invite-h">
         <div class="wrap">
           <div class="cta-panel">
-            <h2 id="invite-h">Ask for an invite</h2>
-            <p>Pawservation is invite-only while it grows. Tell us about your business and we&rsquo;ll set up your services, rates, and booking page.</p>
+            <h2 id="invite-h">Sign up</h2>
+            <p>Pawservation is invite-only while it grows, so new sitters are added by hand. Tell us about your business and we&rsquo;ll email you a sign-up link, then help you set up your services, rates, and booking page.</p>
             ${renderInviteForm()}
           </div>
         </div>
@@ -790,7 +889,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             decline from your phone. Your calendar stays yours.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="/#invite-h">Ask for an invite</a>
+            <a class="btn btn-primary" href="/#invite-h">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
           <p class="note">
@@ -994,10 +1093,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <div class="install-copy">
             <span class="label">Getting started</span>
             <h2 id="setup-h">Three steps to a booking page</h2>
-            <p><strong>Ask for an invite.</strong> Pawservation is invite-only while it grows, so tell us about your business and we will email you a sign-up link.</p>
+            <p><strong>Sign up.</strong> Pawservation is invite-only while it grows, so tell us about your business and we will email you a sign-up link.</p>
             <p><strong>Set up your services and rates.</strong> The wizard offers presets, each a whole service already shaped, so you tap the ones that describe you and type your prices.</p>
             <p><strong>Paste one line on your website.</strong> Into a page on Squarespace, Wix or plain HTML, swapping in your own short name. The widget sizes itself to fit, and there is an iframe version if your host strips scripts.</p>
-            <p class="note">Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} a year, and adds card payments, extra sitters and booking by chat. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
+            <p class="note">Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} a year, and adds card payments, booking by WhatsApp, booking by chat and extra sitters. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
           </div>
           <div class="codecard">
             <div class="codecard-cap">
@@ -1083,10 +1182,10 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
       <section class="cta-band" aria-labelledby="tour-cta-h">
         <div class="wrap">
           <div class="cta-panel">
-            <h2 id="tour-cta-h">Ask for an invite when you are ready</h2>
+            <h2 id="tour-cta-h">Sign up when you are ready</h2>
             <p>Tell us about your business and we will set up your services, rates and booking page. Or poke at the demo first: nothing to sign up for and nothing you can break.</p>
             <div class="cta-row">
-              <a class="btn btn-inverse" href="/#invite-h">Ask for an invite</a>
+              <a class="btn btn-inverse" href="/#invite-h">Sign up</a>
               <a class="signin-inverse" href="/demo">Try the demo</a>
               <a class="signin-inverse" href="/#pricing">See pricing</a>
             </div>
@@ -1400,7 +1499,7 @@ const CONTACT_HTML = `<!doctype html>
     ${pageHead(
       '/contact',
       'Contact | Pawservation',
-      'How to reach Pawservation: ask for an invite, get help with an account you already have, or find out where to go if you are a pet owner looking for your own sitter.',
+      'How to reach Pawservation: sign up, get help with an account you already have, or find out where to go if you are a pet owner looking for your own sitter.',
     )}
     <style>${PAGE_STYLE}</style>
   </head>
@@ -1439,7 +1538,7 @@ const CONTACT_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>You run a pet-care business and want an account</h2>
-            <p>Use the <a href="/#invite-h">invite form on the homepage</a>. Tell us what you offer and roughly how you work; the reply sets up your services, rates and booking page so you aren&rsquo;t starting from an empty screen. Pawservation is invite-only while it grows, so this is the front door rather than a marketing capture form.</p>
+            <p>Use the <a href="/#invite-h">sign-up form on the homepage</a>. Tell us what you offer and roughly how you work; the reply sets up your services, rates and booking page so you aren&rsquo;t starting from an empty screen. Pawservation is invite-only while it grows, so this is the front door rather than a marketing capture form.</p>
           </div>
           <div class="feature">
             <h2>You already have an account and something is wrong</h2>

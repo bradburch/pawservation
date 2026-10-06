@@ -20,8 +20,8 @@ const CUSTOMER_COUNTS = ['0', '1-5', '6-15', '16-50', '50+'] as const;
 
 const MAX_WEBSITE_LENGTH = 200;
 
-/** Deliberately lenient, and the leniency is the point: a sitter types `bradpaws.com`, not
- * `https://bradpaws.com/`, and plenty of them answer with a Facebook or Instagram page instead of
+/** Deliberately lenient, and the leniency is the point: a sitter types `yourbusiness.com`, not
+ * `https://yourbusiness.com/`, and plenty of them answer with a Facebook or Instagram page instead of
  * a domain of their own. A `new URL()` parse or a scheme-requiring regex would reject the most
  * common CORRECT answer and hand the visitor a 400 she cannot diagnose. This is a funnel form
  * that emails a human and stores nothing, so the only job here is to turn away an answer that
@@ -75,7 +75,7 @@ function invalidFields(values: InviteFormValues): string[] {
   const website = values.website?.trim() ?? '';
   if (!website) bad.push('Website or social page');
   else if (!isPlausibleWebsite(website))
-    bad.push('Website or social page (something like bradpaws.com)');
+    bad.push('Website or social page (something like yourbusiness.com)');
   if (!values.city?.trim()) bad.push('City');
   if (!values.services?.trim()) bad.push('Services you offer');
   if (!CUSTOMER_COUNTS.includes(values.customerCount as (typeof CUSTOMER_COUNTS)[number]))

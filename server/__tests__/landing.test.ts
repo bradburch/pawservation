@@ -376,4 +376,80 @@ describe('GET / — landing page', () => {
     }
     expect(body).toContain('Brad Burch');
   });
+
+  it('offers a no-website path beside the website one, as an equal', async () => {
+    const body = await landingBody();
+    // The booking page on her own site and no website at all are two first-class paths, so they
+    // sit side by side right under the hero rather than one being a footnote to the other. The
+    // link is /embed/:slug itself, which works on Solo; WhatsApp is the Pro half and says so.
+    const ways = body.slice(body.indexOf('id="ways"'), body.indexOf('id="how"'));
+    expect(body.indexOf('id="ways"')).toBeLessThan(body.indexOf('id="how"'));
+    expect(ways).toContain('<div class="features features-3">');
+    expect(ways.match(/<div class="feature">/g)?.length).toBe(3);
+    expect(ways).toContain('<h3>On your own website</h3>');
+    expect(ways).toContain('<h3>No website needed</h3>');
+    expect(ways).toContain('<h3>By WhatsApp, on Pro</h3>');
+  });
+
+  it('leads Pro with the assistant, keeps her the one who confirms, and keeps card payments', async () => {
+    const body = await landingBody();
+    const pro = body.slice(body.indexOf('id="pro"'), body.indexOf('id="pricing"'));
+    expect(body.indexOf('id="pro"')).toBeGreaterThan(body.indexOf('id="dashboard"'));
+    expect(pro).toContain('<div class="features features-3">');
+    expect(pro.match(/<div class="feature">/g)?.length).toBe(3);
+    expect(pro).toContain('<h3>Booking by WhatsApp</h3>');
+    expect(pro).toContain('Confirm and Decline buttons');
+    expect(pro).toContain('<h3>Card payments through your own Stripe account</h3>');
+    // The assistant supports the relationship and never replaces the sitter: every request
+    // still waits on her, and nothing here may hand her a number or let a message book itself.
+    for (const overclaim of [
+      'we give you a number',
+      'your new number',
+      'confirmed instantly',
+      'books itself',
+      'automation',
+      'ai-powered',
+      'photo',
+      'reminder',
+    ])
+      expect(pro.toLowerCase(), overclaim).not.toContain(overclaim);
+    // On the Pro card, WhatsApp leads directly after "Everything in Solo", and card payments
+    // stay on the list as a feature rather than the headline.
+    const card = body.slice(body.indexOf('<h3>Pro</h3>'), body.indexOf('id="install"'));
+    const items = [...card.matchAll(/<li>([^<]*)/g)].map((m) => m[1]);
+    expect(items[0]).toBe('Everything in Solo');
+    expect(items[1]).toMatch(/^Booking by WhatsApp/);
+    expect(items.some((t) => t.startsWith('Card payments through your own Stripe account'))).toBe(
+      true,
+    );
+  });
+
+  it('labels the call to action Sign up, and says the link comes by email', async () => {
+    const body = await landingBody();
+    // There is no self-serve signup: /api/signup/* is allowlist-only, and the form posts to
+    // /request-invite, which emails the owner. "Sign up" is truthful only beside the sentence
+    // saying a person sends the sign-up link, and the submit button names what it asks for.
+    expect(body).not.toContain('Ask for an invite');
+    expect(body).toContain('<h2 id="invite-h">Sign up</h2>');
+    expect(body).toContain('email you a sign-up link');
+    expect(body).toContain('type="submit">Request a sign-up link</button>');
+  });
+
+  it('says who it is for: one sitter with ten to twenty regular clients', async () => {
+    const body = await landingBody();
+    const fit = body.slice(body.indexOf('id="fit"'), body.indexOf('id="ways"'));
+    expect(body.indexOf('id="fit"')).toBeLessThan(body.indexOf('id="how"'));
+    expect(fit).toContain('ten to twenty regular clients');
+    expect(fit).toContain('on your own');
+    expect(fit.match(/<div class="feature">/g)?.length).toBe(3);
+    // A pricing example must never read as an estimate the product would make.
+    expect(fit).toContain('never guessed at');
+  });
+
+  it('describes the product as neither open source nor free, and cites no other business', async () => {
+    const body = (await landingBody()).toLowerCase();
+    for (const legacy of ['open source', 'open-source', 'free tier', 'free plan', 'free forever'])
+      expect(body, legacy).not.toContain(legacy);
+    expect(body).not.toContain('bradpaws');
+  });
 });

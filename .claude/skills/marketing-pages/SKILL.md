@@ -27,6 +27,12 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   may be described as available either, with one standing exception the owner made on 2026-09-04:
   the Pro tier is presented as sold. No page may offer a checkout, a card form or a trial mechanic,
   because this repo contains no billing code.
+  Booking by WhatsApp is sold as part of Pro on the owner's instruction (2026-10-05), and the copy
+  claims only what it does: clients message the sitter's own number to book, get a quote,
+  reschedule or cancel; she gets each new request as an alert with Confirm and Decline; the client
+  hears the answer. The calls to action read "Sign up" on the same instruction, and stay truthful
+  only beside the sentence that a person emails the sign-up link: signup is allowlist-only and the
+  form posts to `/request-invite`.
 
 ## `pageHead` and the canonical
 
