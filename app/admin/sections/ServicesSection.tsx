@@ -16,7 +16,8 @@ const ADD_KEY = '__add';
  * block (server/routes/public.ts): renders only when `premium.assistant === true` and
  * `premium.origin` is a non-empty string, otherwise nothing — no gating logic beyond that, and no
  * knowledge of what the iframe's content is or does. On any fetch failure this renders nothing
- * (absence, not an error) rather than degrade the dashboard.
+ * (absence, not an error) rather than degrade the dashboard. The frame starts at zero height
+ * (blank space for a page that never loads is worse than none) and unmounts on its own `error`.
  *
  * The one shared address is the path template itself, a deployment-level constant like the origin.
  * Height auto-resize mirrors the booking widget's own protocol (app/embed/App.tsx /
@@ -26,7 +27,9 @@ const ADD_KEY = '__add';
  */
 function SettingsReviewEmbed({ slug }: { slug: string }) {
   const [config, setConfig] = useState<TenantConfig | null>(null);
-  const [height, setHeight] = useState(240);
+  const [height, setHeight] = useState(0);
+  // A frame that reports a failure is dropped, not left as a broken box.
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -56,13 +59,14 @@ function SettingsReviewEmbed({ slug }: { slug: string }) {
     return () => window.removeEventListener('message', onMessage);
   }, [origin]);
 
-  if (!origin) return null;
+  if (!origin || failed) return null;
 
   return (
     <iframe
       title="Settings review"
       src={`${origin}/premium/audit/${slug}`}
       style={{ width: '100%', border: '0', height: `${height}px` }}
+      onError={() => setFailed(true)}
     />
   );
 }

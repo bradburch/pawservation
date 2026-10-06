@@ -4,7 +4,7 @@ import * as v from 'valibot';
 import { applyBillingEvent, getTenantById, type BillingEventKind } from '../db/repo';
 import { requestContext, securityEvent } from '../lib/log';
 import { UNKNOWN_TENANT } from '../lib/middleware';
-import { normalizeBilledUntil, normalizePremiumUntil } from '../lib/premium';
+import { lowersBilledUntil, normalizeBilledUntil, normalizePremiumUntil } from '../lib/premium';
 import { checkAndBumpRateLimit } from '../lib/rate-limit';
 import { invalidateTenantCache } from '../lib/tenant-resolve';
 import { constantTimeEqual } from '../lib/timing';
@@ -339,6 +339,17 @@ export const billingRoutes = new Hono<AppEnv>().post('/:slug/admin/billing/event
     // subscription a newer one replaced. There is no LOWER bound on `eventCreated` to relax for a
     // resync — the schema's floor is 0 — and the 5-minute future-skew rule above still applies to
     // it, so a resync can be as old as the payment it is derived from and no newer than the clock.
+    return await declined(c, row.Slug, body.eventId, 'stale_event');
+  }
+  if (
+    kind !== 'resync' &&
+    row.LastBillingEventAt != null &&
+    eventAt === row.LastBillingEventAt &&
+    row.StripeSubscriptionId === body.stripeSubscriptionId &&
+    lowersBilledUntil(row.BilledUntil, billedUntil)
+  ) {
+    // THE TIE-BREAK, mirroring the writer's `WHERE`: `created` is whole seconds and the processor
+    // says not to order by it, so within one second the paid-through date only moves forward.
     return await declined(c, row.Slug, body.eventId, 'stale_event');
   }
   if (

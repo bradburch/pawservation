@@ -486,6 +486,12 @@ now is, and they differ from each other in two ways:
   checkout must not regress a row to the subscription a newer one replaced. `LastBillingEventAt`
   is therefore a **high-water mark**, never lowered, so an older resync applies its payload without
   re-opening the stale window to every ordinary webhook redelivered from between;
+- **a same-second tie is broken by the paid-through date.** The processor's `created` is whole
+  seconds and its documentation says not to order events by it. An event created in the same second
+  as the last one applied still lands, except that one for the CURRENT subscription whose
+  `billedUntil` is earlier than the stored date is declined `stale_event`, so arrival order inside a
+  second cannot lower what was paid for. No seen-set of event ids is kept: an older duplicate is
+  stale, and a tied one is identical or refused by that rule;
 - **a `resync` may replace the subscription only within the same customer.** One naming a
   different `stripeCustomerId` than the row holds is declined `not_current_subscription`: it is
   talking about somebody else's subscription, and the shared secret alone must not be enough to
