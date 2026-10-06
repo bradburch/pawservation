@@ -108,6 +108,19 @@ describe('cleanRefOrigin', () => {
   ])('drops %j', (input) => expect(cleanRefOrigin(input, own)).toBeUndefined());
 });
 
+describe('GET /getting-started carries attribution forward on its Sign up links', () => {
+  it('appends the cleaned tags to its /signup links, and leaves them bare when there are none', async () => {
+    const { env } = createTestEnv();
+    const tagged = await (
+      await app.request('/getting-started?utm_source=linkedin&utm_campaign=post-1', {}, env)
+    ).text();
+    expect(tagged).toContain('href="/signup?utm_source=linkedin&amp;utm_campaign=post-1"');
+    expect(tagged).not.toContain('href="/signup"');
+    const bare = await (await app.request('/getting-started', {}, env)).text();
+    expect(bare).not.toContain('/signup?');
+  });
+});
+
 describe('GET / carries attribution forward on its Sign up links', () => {
   it('appends the cleaned tags and the referring ORIGIN to every /signup link', async () => {
     const { env } = createTestEnv();

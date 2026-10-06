@@ -22,6 +22,7 @@ const CONNECT_HOST = 'https://cloudflareinsights.com';
 const MARKETING_PATHS = [
   '/',
   '/how-it-works',
+  '/getting-started',
   '/about',
   '/contact',
   '/privacy',

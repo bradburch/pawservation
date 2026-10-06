@@ -109,6 +109,16 @@ export function normalizeBilledUntil(raw: string, now: Date = new Date()): strin
 }
 
 /**
+ * Would storing `incoming` LOWER the stored paid-through date? Both in the stored shape. The one
+ * place two `BilledUntil` values are compared, because the entitlement scanner holds every such
+ * comparison to this module. Used to break a same-second tie between billing events, where the
+ * processor's `created` cannot order them: within one second the date only moves forward.
+ */
+export function lowersBilledUntil(stored: string | null, incoming: string): boolean {
+  return stored != null && incoming < stored;
+}
+
+/**
  * THE FIVE COLUMNS PLAN STATE IS DECIDED FROM, and nothing else. Narrower than `Tenant` on purpose:
  * the owner console's roster row is not a tenant row, and the alternative to this type was a second
  * copy of the rule in `routes/owner.ts` — the exact thing the one-expression rule forbids.

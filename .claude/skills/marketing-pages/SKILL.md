@@ -1,6 +1,6 @@
 ---
 name: marketing-pages
-description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /how-it-works, /about, /contact, /privacy, /terms, /signup) — canonical URLs, robots/llms.txt, JSON-LD, CSP script-free rule, og-cards. Use when touching these pages or their SEO/agent-discoverability surface.
+description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /how-it-works, /getting-started, /about, /contact, /privacy, /terms, /signup) — canonical URLs, robots/llms.txt, JSON-LD, CSP script-free rule, og-cards. Use when touching these pages or their SEO/agent-discoverability surface.
 ---
 
 # Marketing pages, SEO and agent-discoverability
@@ -41,7 +41,7 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
 - **The other third-party script is the Cloudflare Web Analytics beacon (owner decision
   2026-10-05).** When `CF_WEB_ANALYTICS_TOKEN` is set (32 hex), `marketingHtml`
   (`server/lib/web-analytics.ts`) appends the cookieless beacon before `</body>` on the six pages
-  above and on the GETs of `/signup` and `/signup/sent`, and sets the `webAnalytics` context flag
+  above, `/getting-started`, and the GETs of `/signup` and `/signup/sent`, and sets the `webAnalytics` context flag
   the header middleware reads to add `https://static.cloudflareinsights.com` to the ONE `script-src`
   list (beside Turnstile's on `/signup`) and `https://cloudflareinsights.com` to the ONE
   `connect-src` list (beside the premium origin). Tag and allowance are one decision, so neither
@@ -49,13 +49,23 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   `/demo`, `/setup` or any POST response; `web-analytics.test.ts` pins those as unchanged. A page
   added here must be served through `marketingHtml` to be counted, and the privacy page's "What we
   measure" section lists the pages by name, so it changes in the same commit.
-- **A sign-up carries where it came from.** `GET /` reads `utm_source`, `utm_campaign` and the
-  Referer's ORIGIN (`server/lib/attribution.ts`) and appends them to its `href="/signup"` links
+- **A sign-up carries where it came from.** `GET /` and `GET /getting-started` read `utm_source`,
+  `utm_campaign` and the Referer's ORIGIN (`server/lib/attribution.ts`) and append them to their
+  `href="/signup"` links (`withSignupAttribution` in `server/index.ts`)
   (the referrer as `ref_origin`); `GET /signup` reads the same from its query, or from its own
   Referer on a direct arrival, into hidden fields on the form; every `POST /signup` re-render keeps
   them, cleaned again at each hop, and the owner's `sendSignupNotice` states them. Malformed values
   are dropped, never a 400; never logged, never stored. The other pages' Sign up links do not carry
   them.
+
+## `/getting-started`, the sitter's setup guide
+
+A seventh `pageHead` page, on the `/contact` skeleton (bare `.nav-right`, `.legal` prose, one `h2`
+per `.feature`), so it adds no CSS. It walks a new sitter from the sign-up email to booking by
+WhatsApp using the dashboard's own labels, and `getting-started.test.ts` pins the labels she will
+look for, so a dashboard rename fails a test rather than stranding her. Its Pro sections name a
+dashboard place, never a path on the paid origin: the cross-repo contract budget is full. It is in
+the sitemap, `run_worker_first`, the product `llms.txt` and the shared footer ("Setup guide").
 
 ## `pageHead` and the canonical
 

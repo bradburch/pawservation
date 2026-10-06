@@ -43,9 +43,9 @@ function whenText(b: Booking): string {
  * auto-resizing iframe on somebody else's page:
  *  - It starts at ZERO height and grows only once the framed page reports one. A page that never
  *    loads — origin unreachable, entitlement lapsed between two reads, a blocked request — never
- *    posts, so it never takes up space and never bounces the host page. A cross-origin load
- *    failure is mostly invisible to the parent; `onError` covers the cases the browser does report
- *    and unmounts the frame outright. The booking form and the list above are unaffected either way.
+ *    posts, so it never takes up space and never bounces the host page. Nothing
+ *    unmounts it on failure: browsers fire no `error` event for an iframe, so the frame simply
+ *    stays at zero height. The booking form and the list above are unaffected either way.
  *  - `event.source` is checked as well as `event.origin`. The audit card is the only frame on its
  *    page; the widget is not the only thing on the host page that may post to it.
  */
@@ -53,7 +53,6 @@ function PaidSurfaceEmbed({ config }: { config: TenantConfig }) {
   const origin = config.premium?.chat === true ? config.premium.origin : null;
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(0);
-  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!origin) return;
@@ -70,14 +69,13 @@ function PaidSurfaceEmbed({ config }: { config: TenantConfig }) {
     return () => window.removeEventListener('message', onMessage);
   }, [origin]);
 
-  if (!origin || failed) return null;
+  if (!origin) return null;
 
   return (
     <iframe
       ref={frame}
       title="Your account"
       src={`${origin}/premium/pay/${slug}`}
-      onError={() => setFailed(true)}
       style={{ width: '100%', border: '0', display: 'block', height: `${height}px` }}
     />
   );

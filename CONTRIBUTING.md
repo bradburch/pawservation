@@ -43,8 +43,3 @@ npm run build
 
 Open an issue using the provided templates. For anything security-sensitive, **do not** open a
 public issue — follow [SECURITY.md](./SECURITY.md) instead.
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the
-[MIT License](./LICENSE).

@@ -1002,6 +1002,23 @@ export async function listBookingsForTenant(
   });
 }
 
+/** Optimistic-concurrency precondition for `updateBookingStatus` (see its doc). */
+export interface ExpectedBooking {
+  startDate: string;
+  endDate: string | null;
+  petCount: number;
+  estCostCents: number | null;
+}
+
+/** The SQL fragment and binds for an `expected` precondition; empty when there is none. */
+function expectedClause(expected?: ExpectedBooking): { sql: string; binds: unknown[] } {
+  if (!expected) return { sql: '', binds: [] };
+  return {
+    sql: ' AND StartDate = ? AND EndDate IS ? AND PetCount = ? AND EstCost IS ?',
+    binds: [expected.startDate, expected.endDate, expected.petCount, expected.estCostCents],
+  };
+}
+
 /**
  * Sitter-driven lifecycle transition. The guard is entirely in SQL so it's atomic with the write:
  * 'blocked' rows aren't real bookings (never surfaced or manageable here), and 'cancelled' and
@@ -1012,6 +1029,11 @@ export async function listBookingsForTenant(
  * only valid from 'pending': a confirmed booking is cancelled, never declined.
  *
  * Every transition re-enters the calendar outbox; the push that mirrors it clears the flag.
+ *
+ * `expected` is an optional optimistic-concurrency precondition: the dates, pet count and estimate
+ * (CENTS, 0015) the caller was looking at when it decided. It is part of the UPDATE's own WHERE, so
+ * a client edit landing between the caller's read and this write simply matches no row. The two
+ * nullable columns compare with `IS ?` so a single-day or unpriced booking still matches.
  */
 export async function updateBookingStatus(
   db: D1Database,
@@ -1020,16 +1042,18 @@ export async function updateBookingStatus(
   status: 'confirmed' | 'cancelled' | 'declined',
   /** CENTS (0015). */
   cancellationFee?: number,
+  expected?: ExpectedBooking,
 ): Promise<boolean> {
+  const pre = expectedClause(expected);
   // Assessed cancellation: record the fee and cancel atomically. The `Status = 'confirmed'` guard
   // lives in the SQL so a raced double-cancel can't charge the fee twice.
   if (status === 'cancelled' && cancellationFee != null) {
     const result = await db
       .prepare(
         `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = 1
-         WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'confirmed'`,
+         WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'confirmed'${pre.sql}`,
       )
-      .bind(cancellationFee, tenantId, id)
+      .bind(cancellationFee, tenantId, id, ...pre.binds)
       .run();
     return (result.meta as { changes?: number }).changes !== 0;
   }
@@ -1038,17 +1062,17 @@ export async function updateBookingStatus(
       ? await db
           .prepare(
             `UPDATE BookingRequests SET Status = 'declined', SyncPending = 1
-             WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'pending'`,
+             WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'pending'${pre.sql}`,
           )
-          .bind(tenantId, id)
+          .bind(tenantId, id, ...pre.binds)
           .run()
       : await db
           .prepare(
             `UPDATE BookingRequests SET Status = ?, SyncPending = 1
              WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
-               AND Status NOT IN ('cancelled', 'declined')`,
+               AND Status NOT IN ('cancelled', 'declined')${pre.sql}`,
           )
-          .bind(status, tenantId, id)
+          .bind(status, tenantId, id, ...pre.binds)
           .run();
   return (result.meta as { changes?: number }).changes !== 0;
 }
@@ -6114,12 +6138,19 @@ export type BillingEventKind = 'checkout' | 'resync' | 'ordinary';
  * THE THREE GUARDS ARE IN THE `WHERE`, not in the caller. The route makes the same decisions in
  * order to report WHICH rule fired, but two redeliveries arriving at once would interleave a
  * read-then-write; here they cannot.
- *   - `LastBillingEventAt <= ?` — an event created STRICTLY BEFORE the last one applied does
- *     nothing. Equality applies, deliberately: a processor emits several events for one action
- *     inside a single second, and a rule that refused the ties threw away the ones carrying a
- *     different payload. Idempotence is bought by the SET semantics above instead — every column
- *     is assigned, none is extended, so the identical request twice leaves a byte-identical row
- *     while a genuinely different same-second event still lands. A `'resync'` IS EXEMPT from this
+ *   - `LastBillingEventAt` — an event created STRICTLY BEFORE the last one applied does nothing.
+ *     Equality applies, deliberately: a processor emits several events for one action inside a
+ *     single second, and a rule that refused the ties threw away the ones carrying a different
+ *     payload. But the processor's `created` is whole seconds and its own documentation says not
+ *     to order events by it, so a tie is broken by the one value that is monotonic for a
+ *     subscription: the date it is paid through. A same-second event for the CURRENT subscription
+ *     whose `billedUntil` is EARLIER than the stored one does nothing, so arrival order inside a
+ *     second cannot lower what was paid for. (A tie for another subscription, which only an
+ *     establishing event can reach here, is not compared: two subscriptions' dates are not
+ *     ordered by each other.) Idempotence is bought by the SET semantics above — every column is
+ *     assigned, none is extended, so the identical request twice leaves a byte-identical row.
+ *     Duplicates need no seen-set: an older one is stale, a tied one is either identical or
+ *     refused by the date rule. A `'resync'` IS EXEMPT from this
  *     rule, and only a resync: its stamp is one the caller derives from a payment, not a wall
  *     clock, and can be months older than the last webhook — and the frozen row it exists to
  *     repair is exactly the row whose stamp is newer. A `'checkout'` is NOT exempt — its stamp is
@@ -6187,7 +6218,9 @@ export async function applyBillingEvent(
               StripeSubscriptionId = ?,
               LastBillingEventAt = MAX(COALESCE(LastBillingEventAt, ''), ?)
         WHERE Id = ?
-          AND (? = 1 OR LastBillingEventAt IS NULL OR LastBillingEventAt <= ?)
+          AND (? = 1 OR LastBillingEventAt IS NULL OR LastBillingEventAt < ?
+               OR (LastBillingEventAt = ?
+                   AND (StripeSubscriptionId IS NOT ? OR BilledUntil IS NULL OR BilledUntil <= ?)))
           AND (? = 1 OR StripeSubscriptionId IS NULL OR StripeSubscriptionId = ?)
           AND (? = 0 OR StripeCustomerId IS NULL OR StripeCustomerId = ?)`,
     )
@@ -6202,6 +6235,9 @@ export async function applyBillingEvent(
       tenantId,
       staleExempt,
       event.eventAt,
+      event.eventAt,
+      event.stripeSubscriptionId,
+      event.billedUntil,
       establishes,
       event.stripeSubscriptionId,
       sameCustomerOnly,
