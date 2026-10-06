@@ -156,6 +156,62 @@ describe('applyBillingEvent — what one event does to a tenant row', () => {
 });
 
 describe('applyBillingEvent — the two rules that decide which event wins', () => {
+  it('does not let a same-second event regress the paid-through date of the same subscription', async () => {
+    // Stripe's own guidance: `created` does not order events, and ties are real. Within one second
+    // the date a subscription is paid through only moves forward, so arrival order cannot lower it.
+    const { env } = createTestEnv();
+    await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({ eventAt: AT.later, billedUntil: '2026-11-08 00:00:00' }),
+    );
+    const refused = await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({ kind: 'ordinary', eventAt: AT.later, billedUntil: '2026-10-08 00:00:00' }),
+    );
+    expect(refused).toBe(false);
+    const t = (await getTenantById(env.PAWSERVATION_DB, TENANT_A))!;
+    expect(t.BilledUntil).toBe('2026-11-08 00:00:00');
+    expect(t.LastBillingEventAt).toBe(AT.later);
+    // Either arrival order converges on the same row.
+    const { env: env2 } = createTestEnv();
+    await applyBillingEvent(
+      env2.PAWSERVATION_DB,
+      TENANT_A,
+      event({ kind: 'ordinary', eventAt: AT.later, billedUntil: '2026-10-08 00:00:00' }),
+    );
+    await applyBillingEvent(
+      env2.PAWSERVATION_DB,
+      TENANT_A,
+      event({ kind: 'ordinary', eventAt: AT.later, billedUntil: '2026-11-08 00:00:00' }),
+    );
+    expect((await getTenantById(env2.PAWSERVATION_DB, TENANT_A))!.BilledUntil).toBe(
+      '2026-11-08 00:00:00',
+    );
+  });
+
+  it('a same-second CHECKOUT for a different subscription is not held to the old date', async () => {
+    const { env } = createTestEnv();
+    await applyBillingEvent(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      event({ eventAt: AT.later, billedUntil: '2026-11-08 00:00:00' }),
+    );
+    expect(
+      await applyBillingEvent(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        event({
+          eventAt: AT.later,
+          billedUntil: '2026-10-20 00:00:00',
+          stripeSubscriptionId: 'sub_B',
+          stripeCustomerId: 'cus_B',
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it('refuses an event created BEFORE the last one applied, and applies an equal-second one', async () => {
     const { env } = createTestEnv();
     await applyBillingEvent(env.PAWSERVATION_DB, TENANT_A, event({ eventAt: AT.later }));

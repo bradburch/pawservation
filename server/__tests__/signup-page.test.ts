@@ -146,6 +146,8 @@ describe('the sign-up pages read well', () => {
     const body = await (await app.request('/signup/sent', {}, env)).text();
     expect(body.match(/Check your email/g)).toHaveLength(2); // <title> and <h1>, never the body copy
     expect(body).toContain('href="/getting-started"');
+    // The guide link resolves (the page is a worker route, not an asset).
+    expect((await app.request('/getting-started', {}, env)).status).toBe(200);
     expect(body).not.toContain('class="btn btn-inverse" href="/admin"');
     configure(env, { mode: 'review' });
     const review = await (await app.request('/signup/sent', {}, env)).text();

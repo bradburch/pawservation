@@ -1,5 +1,5 @@
 import { SUPPORT_EMAIL } from './email';
-import { PRICING } from './plan-pricing';
+import { PRICE_LINE, PRICING } from './plan-pricing';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /** Escape so tenant-controlled strings can never close the script element or open a new tag. */
@@ -98,11 +98,11 @@ export function buildJsonLdScript(tenant: Tenant, origin: string): string {
 export function buildProductLlmsTxt(origin: string): string {
   return `# Pawservation
 
-> Booking software for pet sitters and dog walkers. A booking widget the sitter embeds on their own website: their services, their rates, their availability rules. Clients request dates, the sitter confirms or declines, and the app tracks what is owed.
+> Booking software for pet sitters and dog walkers. A booking page the sitter puts on their own website or sends as a link: their services, their rates, their availability rules. Clients request dates, the sitter confirms or declines, and the app tracks what is owed.
 
 ## When to use this
 
-- A pet sitter, dog walker, or pet-care business wants clients to request bookings from their OWN website instead of by text message, and wants their availability rules enforced automatically.
+- A pet sitter, dog walker, or pet-care business wants clients to request bookings from their OWN website, or from a booking link they send, instead of by back-and-forth texts, and wants their availability rules enforced automatically.
 - They need boarding, house sitting, daycare, walks or drop-in visits priced per night, day, visit or walk, with capacity caps, minimum notice, a booking horizon, and days off that hold the calendar.
 - They want to know who still owes them money, having collected it their own way.
 - They already live in Google Calendar and want bookings to appear there, with events they add by hand blocking matching requests back.
@@ -116,13 +116,15 @@ export function buildProductLlmsTxt(origin: string): string {
 
 ## Status
 
-- Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year.
-- New sitters are added by invitation while the product grows: ${origin}/#invite-h
+- ${PRICE_LINE} The ${PRICING.trialDays}-day free trial is Solo, with no card needed to start it.
+- Pro adds booking by WhatsApp: clients message the sitter's own WhatsApp number to book, get a quote, reschedule or cancel, through the same booking assistant as the chat on the booking page. The sitter gets each new request as a WhatsApp alert with Confirm and Decline buttons, and the client hears the outcome. Nothing is booked until the sitter confirms.
+- New sitters sign up with their email at ${origin}/signup
 
 ## Pages
 
 - Overview: ${origin}/
 - Full tour of every feature: ${origin}/how-it-works
+- Step-by-step setup guide for a new sitter: ${origin}/getting-started
 - Live demo, no sign-up (a made-up sitter's account): ${origin}/demo
 - Privacy: ${origin}/privacy
 - Terms: ${origin}/terms
@@ -196,7 +198,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `One sitter, unlimited bookings, $${PRICING.soloMonthly} per month. Starts with a ${PRICING.trialDays}-day free trial.`,
+            description: `One sitter, unlimited bookings, $${PRICING.soloMonthly} a month. Starts with a ${PRICING.trialDays}-day free trial.`,
           },
           {
             '@type': 'Offer',
@@ -209,7 +211,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `Everything in Solo plus card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} per year.`,
+            description: `Everything in Solo plus booking by WhatsApp, card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year, per sitter.`,
           },
         ],
         publisher: { '@id': `${origin}/#organization` },
@@ -239,7 +241,7 @@ export function buildProductJsonLdScript(origin: string): string {
           {
             '@type': 'ContactPoint',
             contactType: 'sales',
-            url: `${origin}/#invite-h`,
+            url: `${origin}/signup`,
           },
         ],
       },
