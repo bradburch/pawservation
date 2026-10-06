@@ -85,7 +85,7 @@ export function renderInviteForm(values: InviteFormValues = {}): string {
                 <input id="inv-fax" name="fax" type="text" tabindex="-1" aria-hidden="true" autocomplete="one-time-code" />
               </div>
               <div class="invite-submit">
-                <button class="btn btn-inverse" type="submit">Ask for an invite</button>
+                <button class="btn btn-inverse" type="submit">Request a sign-up link</button>
                 <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
               </div>
             </form>`;
