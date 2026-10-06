@@ -81,14 +81,19 @@ describe("ServiceType 'external' — blocked-like, read-only, unpriced", () => {
     );
     expect(res.status).toBe(404);
     await expect(
-      insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-        bookingRequestId: id,
-        amount: 1000, // cents (0015)
-        method: 'cash',
-        paidDate: TODAY,
-        note: null,
-        externalRef: null,
-      }),
+      insertPayment(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        {
+          bookingRequestId: id,
+          amount: 1000, // cents (0015)
+          method: 'cash',
+          paidDate: TODAY,
+          note: null,
+          externalRef: null,
+        },
+        '2026-07-15',
+      ),
     ).resolves.toBeNull(); // match insertPayment's actual "not payable" contract at HEAD
   });
 

@@ -677,14 +677,19 @@ describe('PUT /:slug/bookings/:id — the customer changes their own booking', (
       estCost: 25000,
     });
     expect(
-      await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-        bookingRequestId: id,
-        amount: 25000,
-        method: 'cash',
-        paidDate: TODAY,
-        note: null,
-        externalRef: null,
-      }),
+      await insertPayment(
+        env.PAWSERVATION_DB,
+        TENANT_A,
+        {
+          bookingRequestId: id,
+          amount: 25000,
+          method: 'cash',
+          paidDate: TODAY,
+          note: null,
+          externalRef: null,
+        },
+        '2026-07-15',
+      ),
     ).not.toBeNull();
 
     const res = await edit(env, token, id, {

@@ -121,22 +121,32 @@ describe('admin data export route', () => {
   it('exports only this tenant, never the other one', async () => {
     const { env } = createTestEnv();
     // Repo seeds, so CENTS (0015). Nothing here asserts on the formatted amount, only markers.
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: 'seed_sp_board1',
-      amount: 10000,
-      method: 'venmo',
-      paidDate: '2028-06-19',
-      note: 'Sunny Paws deposit',
-      externalRef: null,
-    });
-    await insertPayment(env.PAWSERVATION_DB, TENANT_B, {
-      bookingRequestId: 'seed_ht_board1',
-      amount: 20000,
-      method: 'cash',
-      paidDate: '2028-06-19',
-      note: 'Happy Tails deposit',
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: 'seed_sp_board1',
+        amount: 10000,
+        method: 'venmo',
+        paidDate: '2028-06-19',
+        note: 'Sunny Paws deposit',
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_B,
+      {
+        bookingRequestId: 'seed_ht_board1',
+        amount: 20000,
+        method: 'cash',
+        paidDate: '2028-06-19',
+        note: 'Happy Tails deposit',
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
 
     // Sunny Paws' own rows, and NONE of Happy Tails': the fixture gives each tenant its own pet,
     // its own booking ids and its own payment note, so a leak in either direction is nameable.
@@ -193,14 +203,19 @@ describe('admin data export route', () => {
 
   it('names what a payment settles — a booking or a household', async () => {
     const { env } = createTestEnv();
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: 'seed_sp_board1',
-      amount: 10000,
-      method: 'venmo',
-      paidDate: '2028-06-19',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: 'seed_sp_board1',
+        amount: 10000,
+        method: 'venmo',
+        paidDate: '2028-06-19',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     // Bella sorts before Mochi, so she is this household's account id.
     const accountPaymentId = await insertAccountPayment(env.PAWSERVATION_DB, TENANT_A, {
       accountId: 'pet_sp_bella',
@@ -344,14 +359,19 @@ describe('admin data export route', () => {
 
   it('never exports a payment\u2019s Venmo transaction id', async () => {
     const { env } = createTestEnv();
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: 'seed_sp_board1',
-      amount: 4100,
-      method: 'venmo',
-      paidDate: '2028-06-19',
-      note: null,
-      externalRef: 'venmo-txn-9f3c1',
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: 'seed_sp_board1',
+        amount: 4100,
+        method: 'venmo',
+        paidDate: '2028-06-19',
+        note: null,
+        externalRef: 'venmo-txn-9f3c1',
+      },
+      '2026-07-15',
+    );
 
     const rows = await rowsOf(await get(env, 'payments'));
     // ExternalRef is the importer's idempotency key, absent from PaymentRow and every wire
@@ -366,14 +386,19 @@ describe('admin data export route', () => {
     const { env } = createTestEnv();
     // Repo call, so CENTS (0015): 4550 is $45.50, not a whole dollar amount — the case
     // `centsToWholeDollars` used to 500 the export on (it throws on a non-multiple of 100).
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: 'seed_sp_board1',
-      amount: 4550,
-      method: 'venmo',
-      paidDate: '2028-06-19',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: 'seed_sp_board1',
+        amount: 4550,
+        method: 'venmo',
+        paidDate: '2028-06-19',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
 
     const paymentRows = await rowsOf(await get(env, 'payments'));
     expect(paymentRows.slice(1).some((r) => r[paymentRows[0].indexOf('Amount')] === '45.50')).toBe(

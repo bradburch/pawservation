@@ -56,14 +56,19 @@ const makeBooking = (
   });
 
 const pay = (env: Env, tenantId: string, bookingRequestId: string, amount: number) =>
-  insertPayment(env.PAWSERVATION_DB, tenantId, {
-    bookingRequestId,
-    amount,
-    method: 'cash',
-    paidDate: '2026-07-01',
-    note: null,
-    externalRef: null,
-  });
+  insertPayment(
+    env.PAWSERVATION_DB,
+    tenantId,
+    {
+      bookingRequestId,
+      amount,
+      method: 'cash',
+      paidDate: '2026-07-01',
+      note: null,
+      externalRef: null,
+    },
+    '2026-07-15',
+  );
 
 const keep = async (env: Env, slug: string, tenantId: string, bookingId: string, body?: unknown) =>
   app.request(

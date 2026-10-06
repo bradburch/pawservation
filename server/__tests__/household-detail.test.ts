@@ -65,14 +65,19 @@ describe('getHouseholdDetail (repo)', () => {
     // random UUID — two bookings sharing a date would make the received ORDER (not its content)
     // depend on UUID luck, which is not what this test is checking.
     const b1 = await book(env, jen.Id, [rex], 10000, 'confirmed', '2030-01-01', '2030-01-03');
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: b1,
-      amount: 4000,
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: b1,
+        amount: 4000,
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     await insertBookingCharge(env.PAWSERVATION_DB, TENANT_C, {
       bookingRequestId: b1,
       label: 'Vet visit',
@@ -217,14 +222,19 @@ describe('getHouseholdDetail (repo)', () => {
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const stay = await book(env, ana.Id, [mia], 25000);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: stay,
-      amount: 8750,
-      method: 'venmo',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: stay,
+        amount: 8750,
+        method: 'venmo',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
 
     const before = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia, '2026-10-06');
     expect(before!.bookings.find((b) => b.bookingId === stay)).toMatchObject({
@@ -276,14 +286,19 @@ describe('getHouseholdDetail (repo)', () => {
       '2030-03-01',
       '2030-03-03',
     );
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: cancelled,
-      amount: 5000,
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: cancelled,
+        amount: 5000,
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     // Cancelled with NO fee assessed: worth nothing, though $50 was taken against it while live.
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, cancelled, 'cancelled');
 
@@ -367,14 +382,19 @@ describe('getHouseholdDetail (repo)', () => {
     );
     const [mia] = seedPets(raw, TENANT_C, ana.Id, [{ id: 'p_mia', petType: 'dog' }]);
     const declined = await book(env, ana.Id, [mia], 50000, 'pending');
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: declined,
-      amount: 2500,
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: declined,
+        amount: 2500,
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined');
     const detail = await getHouseholdDetail(env.PAWSERVATION_DB, TENANT_C, mia, '2026-10-06');
     const row = detail!.bookings.find((b) => b.bookingId === declined)!;
@@ -398,14 +418,19 @@ describe('GET /:slug/admin/accounts/:accountId (route)', () => {
     // Seeded through the repo, so in CENTS (0015) — and the RESPONSE below is the same cents,
     // emitted verbatim.
     const bookingId = await book(env, jen.Id, [rex], 10000);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: bookingId,
-      amount: 2500,
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: bookingId,
+        amount: 2500,
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     const res = await app.request(
       `/api/${SLUG_C}/admin/accounts/${rex}`,
       { headers: await adminHeaders(TENANT_C) },
@@ -450,14 +475,19 @@ describe('GET /:slug/admin/accounts/:accountId (route)', () => {
     // $100.50 owed, $25.50 received against the booking and $10 against the household: three
     // figures no dollar-shaped wire could have carried, on one statement.
     const bookingId = await book(env, jen.Id, [rex], 10050);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: bookingId,
-      amount: 2550,
-      method: 'cash',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: bookingId,
+        amount: 2550,
+        method: 'cash',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     await insertAccountPayment(env.PAWSERVATION_DB, TENANT_C, {
       accountId: rex,
       amount: 1000,

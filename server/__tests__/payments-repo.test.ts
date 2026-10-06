@@ -23,27 +23,37 @@ const makeBooking = (env: Env, tenantId: string, status: 'pending' | 'confirmed'
 
 /** `amount` is CENTS (0015), like every money value crossing the repo. */
 const pay = (env: Env, tenantId: string, bookingRequestId: string, amount = 5000) =>
-  insertPayment(env.PAWSERVATION_DB, tenantId, {
-    bookingRequestId,
-    amount,
-    method: 'cash',
-    paidDate: '2026-07-01',
-    note: null,
-    externalRef: null,
-  });
+  insertPayment(
+    env.PAWSERVATION_DB,
+    tenantId,
+    {
+      bookingRequestId,
+      amount,
+      method: 'cash',
+      paidDate: '2026-07-01',
+      note: null,
+      externalRef: null,
+    },
+    '2026-07-15',
+  );
 
 describe('payments repo', () => {
   it('records a payment against a confirmed booking and lists it back', async () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
-    const paymentId = await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: bookingId,
-      amount: 7500,
-      method: 'venmo',
-      paidDate: '2026-07-02',
-      note: 'deposit',
-      externalRef: null,
-    });
+    const paymentId = await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: bookingId,
+        amount: 7500,
+        method: 'venmo',
+        paidDate: '2026-07-02',
+        note: 'deposit',
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     expect(paymentId).not.toBeNull();
     const rows = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_A, bookingId);
     expect(rows).toHaveLength(1);
@@ -122,22 +132,32 @@ describe('payments repo', () => {
     const { env } = createTestEnv();
     const bookingId = await makeBooking(env, TENANT_A);
     const otherBookingId = await makeBooking(env, TENANT_A);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: bookingId,
-      amount: 1000,
-      method: 'cash',
-      paidDate: '2026-06-01',
-      note: null,
-      externalRef: null,
-    });
-    await insertPayment(env.PAWSERVATION_DB, TENANT_A, {
-      bookingRequestId: bookingId,
-      amount: 2000,
-      method: 'zelle',
-      paidDate: '2026-07-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: bookingId,
+        amount: 1000,
+        method: 'cash',
+        paidDate: '2026-06-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      {
+        bookingRequestId: bookingId,
+        amount: 2000,
+        method: 'zelle',
+        paidDate: '2026-07-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     await pay(env, TENANT_A, otherBookingId, 99900);
     const rows = await listPaymentsForBooking(env.PAWSERVATION_DB, TENANT_A, bookingId);
     expect(rows.map((r) => r.Amount)).toEqual([2000, 1000]); // the column, in cents

@@ -349,6 +349,8 @@ export type AnalyticsData = {
     Status: string;
     Keepable: number;
     PaidTotal: number;
+    /** 1 for a walk of a series whose date has not arrived (`notYetDueSql`), else 0. */
+    NotYetDue: number;
   }[];
   /**
    * ONE BALANCE PER HOUSEHOLD — the connected component of owners and pets `buildAccounts` derives,

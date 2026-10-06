@@ -33,14 +33,19 @@ const makeBooking = (
   });
 
 const pay = (env: Env, tenantId: string, bookingRequestId: string, amount: number) =>
-  insertPayment(env.PAWSERVATION_DB, tenantId, {
-    bookingRequestId,
-    amount,
-    method: 'cash',
-    paidDate: '2026-07-01',
-    note: null,
-    externalRef: null,
-  });
+  insertPayment(
+    env.PAWSERVATION_DB,
+    tenantId,
+    {
+      bookingRequestId,
+      amount,
+      method: 'cash',
+      paidDate: '2026-07-01',
+      note: null,
+      externalRef: null,
+    },
+    '2026-07-15',
+  );
 
 /** Seeds a two-tier cancellation policy on sunny-paws' boarding service. */
 function seedBoardingTiers(raw: DatabaseSync): void {

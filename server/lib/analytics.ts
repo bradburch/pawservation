@@ -61,9 +61,11 @@ export function serializeAnalytics(data: AnalyticsData) {
      * for it by rule, so a charge cannot close its credit — and offering a button that does not work
      * is the mirror of the "balance whose *Record payment* 404s" defect the outstanding pairing
      * exists to prevent. Derived here from the SAME status rule the SQL applies, so the client never
-     * restates it.
+     * restates it. A walk NOT YET DUE is refused the same way (`not-yet-due`): its credit is a
+     * prepayment that nets on the walk's date, and `NotYetDue` comes from the very fragment
+     * `keepBookingCredit`'s guard uses.
      */
-    canKeep: c.Status !== 'declined',
+    canKeep: c.Status !== 'declined' && !c.NotYetDue,
   }));
   return {
     tiles: {

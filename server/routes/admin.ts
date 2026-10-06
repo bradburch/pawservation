@@ -479,6 +479,10 @@ function parseExpectedBooking(v: unknown): ExpectedBooking | null {
   return { startDate, endDate, petCount, estCostCents };
 }
 
+/** A booking payment, or a kept credit, on a walk of a series whose date has not arrived. */
+const NOT_YET_DUE_MESSAGE =
+  "This walk isn't due yet — record it as a payment on the household instead.";
+
 /** null/undefined (use default) or a timezone Intl accepts. */
 function isValidTimezone(value: unknown): value is string | null | undefined {
   if (value === null || value === undefined) return true;
@@ -3003,17 +3007,41 @@ export const adminRoutes = new Hono<AppEnv>()
     if (typeof body.paidDate !== 'string' || !isRealDate(body.paidDate))
       return c.json({ error: 'Invalid payment date.' }, 400);
     const note = typeof body.note === 'string' && body.note.trim() !== '' ? body.note.trim() : null;
-    const paymentId = await insertPayment(c.env.PAWSERVATION_DB, tenant.Id, {
-      bookingRequestId: bookingId,
-      amount: body.amountCents,
-      method: body.method,
-      paidDate: body.paidDate,
-      note,
-      externalRef: null,
-    });
-    // Guard refused: foreign, blocked/external, declined, or a cancelled booking that owes
-    // nothing — no fee and no live charges (pending is deliberately allowed).
-    if (!paymentId) return c.json({ error: 'Not found.' }, 404);
+    // ONE `today` for the insert and for the refusal's explanation below: two clock reads either
+    // side of midnight could refuse a walk as not yet due and then find it due, answering 404.
+    const today = tenantToday(tenant);
+    const paymentId = await insertPayment(
+      c.env.PAWSERVATION_DB,
+      tenant.Id,
+      {
+        bookingRequestId: bookingId,
+        amount: body.amountCents,
+        method: body.method,
+        paidDate: body.paidDate,
+        note,
+        externalRef: null,
+      },
+      today,
+    );
+    if (!paymentId) {
+      // A walk of a series that is not yet due is refused by the accrual, not by existence, so the
+      // sitter is told where the money goes (see `insertPayment`). Same predicate as
+      // `notYetDueSql`, same `today`.
+      const booking = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
+      if (
+        booking &&
+        booking.ServiceType !== 'blocked' &&
+        booking.ServiceType !== 'external' &&
+        booking.SeriesId !== null &&
+        booking.StartDate > today &&
+        booking.Status !== 'cancelled' &&
+        booking.Status !== 'declined'
+      )
+        return c.json({ error: NOT_YET_DUE_MESSAGE, code: 'not_yet_due' }, 409);
+      // Otherwise: foreign, blocked/external, declined, or a cancelled booking that owes nothing —
+      // no fee and no live charges (pending is deliberately allowed).
+      return c.json({ error: 'Not found.' }, 404);
+    }
     const payments = await listPaymentsForBooking(c.env.PAWSERVATION_DB, tenant.Id, bookingId);
     const created = payments.find((p) => p.Id === paymentId);
     if (!created) return c.json({ error: 'Not found.' }, 404);
@@ -3062,6 +3090,8 @@ export const adminRoutes = new Hono<AppEnv>()
         );
       case 'no-credit':
         return c.json({ error: 'That booking is not in credit.' }, 409);
+      case 'not-yet-due':
+        return c.json({ error: NOT_YET_DUE_MESSAGE, code: 'not_yet_due' }, 409);
       default: {
         const unhandled: never = result;
         return c.json({ error: `Cannot close this credit (${String(unhandled)}).` }, 409);

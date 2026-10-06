@@ -50,14 +50,19 @@ const pay = (
   amount: number,
   paidDate = '2026-07-01',
 ) =>
-  insertPayment(env.PAWSERVATION_DB, tenantId, {
-    bookingRequestId,
-    amount,
-    method: 'cash',
-    paidDate,
-    note: null,
-    externalRef: null,
-  });
+  insertPayment(
+    env.PAWSERVATION_DB,
+    tenantId,
+    {
+      bookingRequestId,
+      amount,
+      method: 'cash',
+      paidDate,
+      note: null,
+      externalRef: null,
+    },
+    '2026-07-15',
+  );
 
 describe('getAnalytics (repo)', () => {
   it('monthly: 12 zero-filled buckets, oldest first, out-of-window payments excluded', async () => {

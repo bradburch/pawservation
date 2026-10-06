@@ -1321,6 +1321,16 @@ export async function getBookingWithCustomer(
  * 'declined' gets neither exception, matching the earnings predicate: a declined row is never
  * billed, so it is never payable.
  *
+ * A WALK NOT YET DUE (`notYetDueSql`) takes no booking payment, and that is the same agreement
+ * read in the other direction: a future walk is not outstanding, so it takes no booking payment;
+ * prepaying is a household payment that nets on the walk's date. Accepting one here would make it
+ * creditable over-payment the day it landed, and keeping that credit would bill the client a
+ * second time when the walk's date arrives. One exception, the same as a cancelled row's second:
+ * a live BookingCharges total — a surcharge is owed when it is logged, whatever the walk's date,
+ * so outstanding lists a charged future walk and its *Record payment* must work. The route
+ * answers a refused future walk 409 `not_yet_due`, not 404, so the sitter is told where the money
+ * goes instead.
+ *
  * `externalRef` carries the Venmo transaction id for imported payments (NULL for hand-recorded
  * ones). A replay violates the partial unique index and THROWS rather than returning null — the
  * importer catches it with isUniqueViolation and reports the row as already imported; the null
@@ -1338,21 +1348,26 @@ export async function insertPayment(
     note: string | null;
     externalRef: string | null;
   },
+  /** The sitter's own date (`tenantToday`) — which walks of a series are owed yet. */
+  today: string,
 ): Promise<string | null> {
   const id = crypto.randomUUID();
+  const notYetDue = notYetDueSql(today, '');
+  const liveCharges = `COALESCE((
+                    SELECT SUM(c.Amount) FROM BookingCharges c
+                    WHERE c.TenantId = BookingRequests.TenantId
+                      AND c.BookingRequestId = BookingRequests.Id
+                  ), 0) > 0`;
   const result = await db
     .prepare(
       `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate, Note, ExternalRef)
        SELECT ?, ?, ?, ?, ?, ?, ?, ?
        FROM BookingRequests
        WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
-         AND (Status NOT IN ('cancelled', 'declined')
+         AND ((Status NOT IN ('cancelled', 'declined') AND NOT ${notYetDue})
               OR COALESCE(CancellationFee, 0) > 0
-              OR (Status = 'cancelled' AND COALESCE((
-                    SELECT SUM(c.Amount) FROM BookingCharges c
-                    WHERE c.TenantId = BookingRequests.TenantId
-                      AND c.BookingRequestId = BookingRequests.Id
-                  ), 0) > 0))`,
+              OR (Status = 'cancelled' AND ${liveCharges})
+              OR (${notYetDue} AND ${liveCharges}))`,
     )
     .bind(
       id,
@@ -2402,6 +2417,21 @@ function baseAmountSql(today: string): string {
 }
 
 /**
+ * A WALK NOT YET DUE: a pending or confirmed walk of a series whose date has not arrived — exactly
+ * the rows `baseAmountSql` zeroes by date. Stated once, for the three readers that must agree with
+ * that zero: `insertPayment`'s guard (no booking payment on it), `keepBookingCredit`'s guard (no
+ * credit kept on it) and the credits list's `NotYetDue` column (so the Earnings page never offers
+ * Keep on one). A cancelled walk is never "not yet due" — its fee is owed when assessed — and a
+ * declined one has its own, older refusal everywhere. `alias` is the table prefix (`'b.'`, or `''`
+ * for an unaliased `FROM BookingRequests`).
+ */
+function notYetDueSql(today: string, alias: 'b.' | ''): string {
+  const d = assertSqlDate(today);
+  return `(${alias}SeriesId IS NOT NULL AND ${alias}StartDate > '${d}'
+    AND ${alias}Status NOT IN ('cancelled', 'declined'))`;
+}
+
+/**
  * What a booking TOTALS to owing: the base amount above PLUS any extra charges logged against it
  * (BookingCharges) — a charge is owed on a stay that happened whether or not it was later
  * cancelled, and EstCost/CancellationFee are never mutated to absorb it. This is the single
@@ -2432,7 +2462,8 @@ const CHARGES_JOIN_SQL = `LEFT JOIN (
  *
  * `insertPayment`'s guard is the other reader of this rule (it cannot share the SQL — it has no
  * `paid`/`chg` subqueries to hand — so it restates the two ways a terminal row can still owe:
- * a non-zero CancellationFee OR a live charges total). It must keep agreeing with this predicate
+ * a non-zero CancellationFee OR a live charges total — and refuses a walk not yet due unless it
+ * carries a live charge, the date half of `baseAmountSql`). It must keep agreeing with this predicate
  * in both directions, or the Earnings page shows a balance whose *Record payment* button 404s.
  * NEITHER SIDE IS SCALED BY 0015 — both compare cents to cents, and scaling one would be exactly
  * the drift this paragraph exists to prevent.
@@ -2541,7 +2572,8 @@ export type KeepCreditResult =
   /** `amount` is CENTS (0015) — computed by `creditAmountSql` and returned by the INSERT, so it
    *  is the same unit as the credit the Earnings page displays. The route publishes it unchanged
    *  as `keptCents`; nothing divides it back. */
-  { outcome: 'kept'; amount: number } | { outcome: 'not-found' | 'declined' | 'no-credit' };
+  | { outcome: 'kept'; amount: number }
+  | { outcome: 'not-found' | 'declined' | 'no-credit' | 'not-yet-due' };
 
 /**
  * CLOSE AN OVER-PAYMENT THE CLIENT AGREED THE SITTER KEEPS, by logging it as a `BookingCharges` row.
@@ -2571,6 +2603,12 @@ export type KeepCreditResult =
  * work — the mirror of the "balance whose *Record payment* 404s" defect. Its only resolution is the
  * refund path. `serializeAnalytics` publishes `canKeep` from the same rule so the UI never offers it.
  *
+ * A walk NOT YET DUE (`notYetDueSql`) is refused too, `'not-yet-due'` — even one carrying a charge,
+ * whose payment beyond the charge is still a prepayment of the walk. Its "credit" is only the walk
+ * not being owed yet: on the walk's date `baseAmountSql` stops zeroing it and the payment nets
+ * against it. Keeping it now would log a charge that bills the client for the walk a second time
+ * the day it falls due. `canKeep` is false for it, from the same fragment.
+ *
  * Reversible by design: deleting the charge re-opens the credit, because both figures are derived
  * rather than stamped.
  */
@@ -2588,7 +2626,8 @@ export async function keepBookingCredit(
        FROM BookingRequests b
        ${PAYMENTS_JOIN_SQL}
        ${CHARGES_JOIN_SQL}
-       WHERE b.TenantId = ? AND b.Id = ? AND b.Status != 'declined' AND ${creditWhereSql(today)}
+       WHERE b.TenantId = ? AND b.Id = ? AND b.Status != 'declined'
+         AND NOT ${notYetDueSql(today, 'b.')} AND ${creditWhereSql(today)}
        RETURNING Amount`,
     )
     .bind(id, KEPT_OVERPAYMENT_LABEL, tenantId, tenantId, tenantId, bookingId)
@@ -2600,18 +2639,20 @@ export async function keepBookingCredit(
   // money route gives them.
   const row = await db
     .prepare(
-      `SELECT b.Status AS Status, ${creditAmountSql(today)} AS Credit
+      `SELECT b.Status AS Status, ${creditAmountSql(today)} AS Credit,
+              ${notYetDueSql(today, 'b.')} AS NotYetDue
        FROM BookingRequests b
        ${PAYMENTS_JOIN_SQL}
        ${CHARGES_JOIN_SQL}
        WHERE b.TenantId = ? AND b.Id = ? AND b.ServiceType NOT IN ('blocked', 'external')`,
     )
     .bind(tenantId, tenantId, tenantId, bookingId)
-    .first<{ Status: string; Credit: number }>();
+    .first<{ Status: string; Credit: number; NotYetDue: number }>();
   if (!row) return { outcome: 'not-found' };
   // "Nothing to close" is checked first: it is the more useful thing to say even about a declined
   // row, and it is the answer to a double-click on a credit that has already been closed.
   if (row.Credit <= 0) return { outcome: 'no-credit' };
+  if (row.NotYetDue) return { outcome: 'not-yet-due' };
   return row.Status === 'declined' ? { outcome: 'declined' } : { outcome: 'no-credit' };
 }
 
@@ -3549,7 +3590,8 @@ export async function getAnalytics(
         `SELECT b.Id AS BookingId, u.Name AS Name, u.Email AS Email,
                 b.ServiceType AS ServiceType, b.StartDate AS StartDate, b.Status AS Status,
                 ${creditableAmountSql(today)} AS Keepable,
-                COALESCE(paid.Total, 0) AS PaidTotal
+                COALESCE(paid.Total, 0) AS PaidTotal,
+                ${notYetDueSql(today, 'b.')} AS NotYetDue
          FROM BookingRequests b
          LEFT JOIN EndUsers u ON u.Id = b.EndUserId AND u.TenantId = b.TenantId
          LEFT JOIN (

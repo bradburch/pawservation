@@ -390,14 +390,19 @@ describe('POST /:slug/admin/payments/attribute/preview', () => {
     // the case that must never reach proposeAttribution, whose own guard would otherwise refuse
     // the whole credit as an unreadable amount instead of simply skipping this booking.
     const declined = await book(env, home, 100, '2026-07-01', 'pending');
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: declined,
-      amount: 50,
-      method: 'cash',
-      paidDate: '2026-06-15',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: declined,
+        amount: 50,
+        method: 'cash',
+        paidDate: '2026-06-15',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined')).toBe(
       true,
     );
@@ -1290,14 +1295,19 @@ describe('POST /:slug/admin/payments/attribute/preview — placing a credit the 
     const { env, raw } = createTestEnv();
     const home = await household(env, raw, 'jen');
     const settled = await book(env, home, 40, '2026-07-01');
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: settled,
-      amount: dollarsToCents(40), // the repo speaks cents (0015)
-      method: 'cash',
-      paidDate: '2026-06-15',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: settled,
+        amount: dollarsToCents(40), // the repo speaks cents (0015)
+        method: 'cash',
+        paidDate: '2026-06-15',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     const paymentId = (await credit(env, home.accountId, 40, '2026-06-01'))!;
 
     const res = await preview(env, TENANT_C, home.accountId);
@@ -2359,14 +2369,19 @@ describe('POST /:slug/admin/payments/attribute/preview — read cost', () => {
     // the response is pinned to.
     const declinedHome = await household(env, raw, 'wdc');
     const declinedBooking = await book(env, declinedHome, 100, '2026-07-01', 'pending');
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: declinedBooking,
-      amount: 50,
-      method: 'cash',
-      paidDate: '2026-06-15',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: declinedBooking,
+        amount: 50,
+        method: 'cash',
+        paidDate: '2026-06-15',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     expect(
       await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declinedBooking, 'declined'),
     ).toBe(true);

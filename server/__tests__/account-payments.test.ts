@@ -86,14 +86,19 @@ describe('account payments (repo)', () => {
     const { env, raw } = createTestEnv();
     const { jen, accountId } = await household(env, raw);
     const bookingId = await book(env, jen.Id, [accountId], 30000);
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: bookingId,
-      amount: 10000,
-      method: 'cash',
-      paidDate: '2026-06-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: bookingId,
+        amount: 10000,
+        method: 'cash',
+        paidDate: '2026-06-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     await accountPayment(env, TENANT_C, accountId, 15000);
     const [balance] = await getHouseholdBalances(env.PAWSERVATION_DB, TENANT_C, '2026-10-06');
     expect(balance).toMatchObject({

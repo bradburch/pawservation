@@ -442,14 +442,19 @@ describe('applyAttribution (repo)', () => {
     // $50 already paid directly against the booking, so its outstanding is $100 — not $0 and not
     // $150. An off-by-one loosening of the guard (e.g. `amount > outstanding + 1`) would slip past
     // a test built only on a $0-outstanding booking; this pins the boundary at a non-zero value.
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: only,
-      amount: 5000,
-      method: 'cash',
-      paidDate: '2026-06-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: only,
+        amount: 5000,
+        method: 'cash',
+        paidDate: '2026-06-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     const paymentId = (await credit(env, home.accountId, 10100))!;
 
     const overResult = await applyAttribution(
@@ -494,14 +499,19 @@ describe('applyAttribution (repo)', () => {
     const only = await book(env, home, 5000);
     // Already $100 paid directly against a $50 booking — genuinely $50 over-paid before this
     // attribution ever runs.
-    await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-      bookingRequestId: only,
-      amount: 10000,
-      method: 'cash',
-      paidDate: '2026-06-01',
-      note: null,
-      externalRef: null,
-    });
+    await insertPayment(
+      env.PAWSERVATION_DB,
+      TENANT_C,
+      {
+        bookingRequestId: only,
+        amount: 10000,
+        method: 'cash',
+        paidDate: '2026-06-01',
+        note: null,
+        externalRef: null,
+      },
+      '2026-07-15',
+    );
     const paymentId = (await credit(env, home.accountId, 1000))!;
 
     const result = await applyAttribution(
@@ -1466,14 +1476,19 @@ describe('householdOutstandingByBooking agrees with getHouseholdDetail', () => {
     });
     await addBookingPets(env.PAWSERVATION_DB, TENANT_C, declined, home.petIds);
     expect(
-      await insertPayment(env.PAWSERVATION_DB, TENANT_C, {
-        bookingRequestId: declined,
-        amount: 5000,
-        method: 'cash',
-        paidDate: '2026-06-15',
-        note: null,
-        externalRef: null,
-      }),
+      await insertPayment(
+        env.PAWSERVATION_DB,
+        TENANT_C,
+        {
+          bookingRequestId: declined,
+          amount: 5000,
+          method: 'cash',
+          paidDate: '2026-06-15',
+          note: null,
+          externalRef: null,
+        },
+        '2026-07-15',
+      ),
     ).not.toBeNull();
     expect(await updateBookingStatus(env.PAWSERVATION_DB, TENANT_C, declined, 'declined')).toBe(
       true,
