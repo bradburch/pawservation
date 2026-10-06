@@ -47,13 +47,18 @@ describe('POST /api/signup/start — enumeration neutrality (email configured)',
   });
 
   it('sends a link only to eligible emails', async () => {
-    const { env } = createTestEnv();
+    const { env, raw } = createTestEnv();
     configureEmail(env);
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('{}', { status: 200 }));
     await start(env, 'nobody@x.test'); // ineligible → no send
     expect(fetchSpy).not.toHaveBeenCalled();
+    // This door carries no Turnstile token, so it never allowlists anyone — in ANY signup mode
+    // (open is the default here). Only POST /signup may add a row (routes/signup-page.ts).
+    expect(
+      raw.prepare("SELECT 1 FROM AllowedSitters WHERE Email = 'nobody@x.test'").get(),
+    ).toBeUndefined();
     await start(env, ALLOWED_EMAIL); // unclaimed allowlist row → send
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith('https://api.resend.com/emails', expect.anything());
