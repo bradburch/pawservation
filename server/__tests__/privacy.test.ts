@@ -75,14 +75,20 @@ describe('GET /privacy', () => {
     const body = await (await app.request('/privacy', {}, env)).text();
     expect(body).toContain('Last updated: October 6, 2026');
     expect(body).toContain('<h2>Conversations with Pro&rsquo;s AI features</h2>');
-    expect(body).toMatch(/we keep a transcript of the messages they send and the assistant&rsquo;s replies/);
+    expect(body).toMatch(
+      /we keep a transcript of the messages they send and the assistant&rsquo;s replies/,
+    );
     expect(body).toMatch(/not the client&rsquo;s own conversation with their assistant/);
     expect(body).toMatch(
       /remove verification codes and any other standalone six-digit number, booking confirmation codes, and payment links/,
     );
     expect(body).toMatch(/kept with no set deletion date/);
-    expect(body).toMatch(/can&rsquo;t currently erase one person&rsquo;s messages from them on request/);
-    expect(body).toMatch(/Texting STOP on WhatsApp stops the messages; it doesn&rsquo;t delete the transcript/);
+    expect(body).toMatch(
+      /can&rsquo;t currently erase one person&rsquo;s messages from them on request/,
+    );
+    expect(body).toMatch(
+      /Texting STOP on WhatsApp stops the messages; it doesn&rsquo;t delete the transcript/,
+    );
     expect(body).toMatch(/Sitters don&rsquo;t see this archive/);
     expect(body).toMatch(/checked automatically for profanity/);
     expect(body).toMatch(/never used to make any decision about the person/);
