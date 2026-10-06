@@ -1336,7 +1336,7 @@ const PRIVACY_HTML = `<!doctype html>
           <p class="chip">Legal</p>
           <h1>Privacy Policy</h1>
           <p class="sub">What we collect, who we share it with, and how long we keep it, written to match what the product does.</p>
-          <p class="note">Last updated: October 5, 2026</p>
+          <p class="note">Last updated: October 6, 2026</p>
         </div>
       </section>
 
@@ -1344,7 +1344,14 @@ const PRIVACY_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h2>What we collect</h2>
-            <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect or store card numbers, on either plan.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, PayPal, check or card). On Pro, a card is entered on a page hosted by Stripe, which holds the card details under the sitter&rsquo;s own Stripe account; Pawservation stores only that a payment happened and its amount.</p>
+            <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect or store card numbers, on either plan.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, PayPal, check or card). On Pro, a card is entered on a page hosted by Stripe, which holds the card details under the sitter&rsquo;s own Stripe account; Pawservation stores only that a payment happened and its amount. On Pro, we also keep transcripts of conversations with its AI features, described in the next section.</p>
+          </div>
+          <div class="feature">
+            <h2>Conversations with Pro&rsquo;s AI features</h2>
+            <p>When a client or a sitter uses one of Pro&rsquo;s AI features, we keep a transcript of the messages they send and the assistant&rsquo;s replies, stored on Pawservation&rsquo;s own systems. That covers the chat assistant on a sitter&rsquo;s booking page, booking by WhatsApp message, and the sitter&rsquo;s back-office assistant. When a client connects their own AI assistant (Claude, for example), we keep only what that assistant sends to Pawservation (its requests and our answers), not the client&rsquo;s own conversation with their assistant.</p>
+            <p>Before a transcript is stored, we remove verification codes and any other standalone six-digit number, booking confirmation codes, and payment links.</p>
+            <p>The Pawservation operator reads these transcripts to support customers, fix problems, and improve the service. Sitters don&rsquo;t see this archive.</p>
+            <p>Messages are also checked automatically for profanity, and a flagged word is recorded alongside the message, as a sign that someone may be having trouble. It is never used to make any decision about the person.</p>
           </div>
           <div class="feature">
             <h2>Who we share it with</h2>
@@ -1363,6 +1370,7 @@ const PRIVACY_HTML = `<!doctype html>
           <div class="feature">
             <h2>How long we keep it</h2>
             <p>Cancelled and declined bookings stay on the record as part of your sitter&rsquo;s booking history, the same way a paper ledger would keep them. Login codes and one-time links expire in minutes and can&rsquo;t be reused. A sitter can delete a client who has no booking history, and can ask us to delete an entire account&rsquo;s data.</p>
+            <p>Transcripts of conversations with Pro&rsquo;s AI features are kept with no set deletion date, and we can&rsquo;t currently erase one person&rsquo;s messages from them on request. Texting STOP on WhatsApp stops the messages; it doesn&rsquo;t delete the transcript.</p>
           </div>
           <div class="feature">
             <h2>Children</h2>
