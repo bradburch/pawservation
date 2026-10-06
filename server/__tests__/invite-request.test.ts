@@ -208,21 +208,27 @@ describe('POST /request-invite', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('a missing website is a 400 that NAMES the website field, not the generic line', async () => {
-    const { env } = createTestEnv();
-    withResendEnv(env);
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response('{}', { status: 200 }));
-    const { website: _website, ...rest3 } = VALID_FIELDS;
-    const res = await postInvite(env, rest3);
-    expect(res.status).toBe(400);
-    const html = await res.text();
-    // invalidFields() is a hand-maintained mirror of InviteRequestBody: a required field added to
-    // the schema and not to the mirror still 400s, but says nothing about WHICH field to fix.
-    expect(html).toContain('Please fix this field, then try again:');
-    expect(html).toContain('Website or social page');
-    expect(fetchSpy).not.toHaveBeenCalled();
+  it('a missing or blank website is accepted, and the owner email omits the line', async () => {
+    // The landing page offers a "no website needed" path, so a sitter with no website and no
+    // social page must be able to ask. Absent and empty-string (the browser sends the empty
+    // field) are both accepted, and neither puts an empty "Website:" line in the owner's mail.
+    for (const variant of ['absent', 'blank'] as const) {
+      const { env } = createTestEnv();
+      withResendEnv(env);
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('{}', { status: 200 }));
+      const { website: _website, ...rest3 } = VALID_FIELDS;
+      const res = await postInvite(
+        env,
+        variant === 'absent' ? rest3 : { ...rest3, website: '   ' },
+      );
+      expect(res.status, variant).toBe(303);
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { text: string };
+      expect(body.text, variant).not.toContain('Website:');
+      fetchSpy.mockRestore();
+    }
   });
 
   it('a value that does not name a web presence at all is refused, and named', async () => {
@@ -444,12 +450,16 @@ describe('GET /request-invite/thanks', () => {
 });
 
 describe('the rendered invite form', () => {
-  it('asks for a website and no longer asks for a phone number', async () => {
+  it('offers an optional website field and no longer asks for a phone number', async () => {
     const { env } = createTestEnv();
     const html = await (await app.request('/', {}, env)).text();
-    // Required, with a real label bound to the input's id (script-free page: no JS validation).
-    expect(html).toContain('<label for="inv-website">Website or social page</label>');
+    // Optional, with a real label bound to the input's id (script-free page: no JS validation).
+    // The other fields stay required; this one is not, for the sitter with no web presence.
+    expect(html).toContain(
+      '<label for="inv-website">Website or social page <span class="invite-optional">(optional)</span></label>',
+    );
     expect(html).toContain('id="inv-website" name="website"');
+    expect(html).not.toMatch(/id="inv-website"[^>]*required/);
     expect(html).toContain('required');
     // type="url" would make the BROWSER demand a scheme, defeating the lenient server rule.
     expect(html).not.toContain('id="inv-website" name="website" type="url"');

@@ -394,7 +394,7 @@ export type InviteRequestFields = {
   business: string;
   name: string;
   email: string;
-  website: string;
+  website?: string;
   city: string;
   neighborhoods?: string;
   services: string;
@@ -438,7 +438,7 @@ export async function sendInviteRequest(env: Env, fields: InviteRequestFields): 
     business: clean(fields.business),
     name: clean(fields.name),
     email: clean(fields.email),
-    website: clean(fields.website),
+    website: fields.website ? clean(fields.website) : undefined,
     city: clean(fields.city),
     neighborhoods: fields.neighborhoods ? clean(fields.neighborhoods) : undefined,
     services: clean(fields.services),

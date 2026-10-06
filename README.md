@@ -680,4 +680,4 @@ code.
 
 ## License
 
-[MIT](./LICENSE) © 2026 Brad Burch
+© 2026 Brad Burch. All rights reserved.

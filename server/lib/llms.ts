@@ -102,7 +102,7 @@ export function buildProductLlmsTxt(origin: string): string {
 
 ## When to use this
 
-- A pet sitter, dog walker, or pet-care business wants clients to request bookings from their OWN website instead of by text message, and wants their availability rules enforced automatically.
+- A pet sitter, dog walker, or pet-care business wants clients to request bookings from their OWN website, or from a booking link they send, instead of by back-and-forth texts, and wants their availability rules enforced automatically.
 - They need boarding, house sitting, daycare, walks or drop-in visits priced per night, day, visit or walk, with capacity caps, minimum notice, a booking horizon, and days off that hold the calendar.
 - They want to know who still owes them money, having collected it their own way.
 - They already live in Google Calendar and want bookings to appear there, with events they add by hand blocking matching requests back.
@@ -117,6 +117,7 @@ export function buildProductLlmsTxt(origin: string): string {
 ## Status
 
 - Solo is $${PRICING.soloMonthly} per sitter per month and starts with a ${PRICING.trialDays}-day free trial. Pro is $${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year.
+- Pro adds booking by WhatsApp: clients message the sitter's own WhatsApp number to book, get a quote, reschedule or cancel, through the same booking assistant as the chat on the booking page. The sitter gets each new request as a WhatsApp alert with Confirm and Decline buttons, and the client hears the outcome. Nothing is booked until the sitter confirms.
 - New sitters are added by invitation while the product grows: ${origin}/#invite-h
 
 ## Pages
@@ -209,7 +210,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `Everything in Solo plus card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} per year.`,
+            description: `Everything in Solo plus booking by WhatsApp, card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} per sitter per month or $${PRICING.proAnnual} per year.`,
           },
         ],
         publisher: { '@id': `${origin}/#organization` },
