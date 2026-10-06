@@ -381,6 +381,25 @@ NOT EXISTS`). No `Tenants` column, so the KV tenant-config cache key needs **no*
   **AND DEPLOY WITH `PLAN_ENFORCE` UNSET** — see README's _Plans and billing_ for the comp sweep
   and the pre-flip check, which are the two steps between this file and a read-only dashboard.
 
+- **`0019_booking_series.sql`** (`feat/series-schema`) — a repeating booking as a stored series:
+  creates `BookingSeries` (the terms), `BookingSeriesPets` and `BookingSeriesSkips` (weeks that were
+  not booked, and why), adds `BookingRequests.SeriesId` and the unique index
+  `idx_BookingRequests_Series_Date`, so one series holds at most one booking per date while any
+  number of single bookings (SeriesId NULL) share a date. Additive: **no DEFAULT** on the new column,
+  so every existing booking reads NULL and stays a single booking. The tables and indexes are
+  `IF NOT EXISTS`, but the one bare `ALTER TABLE … ADD COLUMN` makes a second run fail on
+  `duplicate column name`, so do not re-run it; `PRAGMA table_info(BookingRequests)` answers "has it
+  run?". No `SchemaMeta` marker, for 0017's reason. It contains no `BEGIN`/`COMMIT`/`SAVEPOINT` (D1
+  rejects them — see 0011). **NOT YET APPLIED to the remote DB** — hand-apply before this branch
+  merges: `npx wrangler d1 execute pawservation-db --remote --file ./migrations/0019_booking_series.sql`.
+  **MIGRATE FIRST, THEN DEPLOY**, for the reason 0017's entry gives: `BOOKING_COLS`
+  (`server/db/repo.ts`) selects `BookingRequests.SeriesId`, the booking writers set it, and the
+  client and tenant deletes reference `BookingSeries`, so a worker deployed against an un-migrated
+  database answers `no such column` / `no such table` on availability, `/bookings/mine`,
+  `/admin/bookings`, booking create, edit and status, and client and tenant delete (the 0008
+  incident). Applying 0019 while the old code is live is safe: the column and tables are additive
+  and nothing old reads them.
+
 **The bare `ALTER TABLE … ADD COLUMN` migrations must not be re-run by hand:** that's every
 migration from 0001 through 0010 except 0007 — `0001_venmo_import.sql`,
 `0002_holiday_and_charges.sql`, `0003_gcal_sync.sql`, `0004_booking_window.sql`,

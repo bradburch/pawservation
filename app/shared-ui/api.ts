@@ -184,6 +184,8 @@ export type Booking = {
   feeIfCancelledTodayCents: number | null;
   status: string;
   pets: string[];
+  /** The series this booking belongs to; null = a single booking. */
+  seriesId: string | null;
 };
 
 export type Customer = {
@@ -267,6 +269,8 @@ export type AdminBooking = {
   cancellationFeeCents: number | null;
   feeIfCancelledTodayCents: number | null;
   createdAt: string;
+  /** The series this booking belongs to; null = a single booking. */
+  seriesId: string | null;
 };
 
 /** One recorded payment, booking-level or household-level — the two ledgers emit one shape. */

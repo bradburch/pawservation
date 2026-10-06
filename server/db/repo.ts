@@ -67,7 +67,7 @@ const TENANT_COLS =
   'Id, Slug, DisplayName, AccentColor, Timezone, ContactEmail, ContactPhone, MaxAdvanceMonths, HousesitBoardingOverlapDays, DisabledAt, PremiumUntil, CompedUntil, Plan, BilledUntil, StripeCustomerId, StripeSubscriptionId, LastBillingEventAt, CalendarCostBasis, AttributionSpillDays';
 
 const BOOKING_COLS =
-  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt';
+  'Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, StartTime, DepartureTime, OptionKey, PetCount, EstCost, CancellationFee, GCalEventId, Status, CreatedAt, SeriesId';
 
 /** BOOKING_COLS, table-qualified — needed once a query joins BookingRequests against another
  * table (EndUsers) that shares column names like Id/TenantId, which would otherwise be ambiguous. */
@@ -659,7 +659,9 @@ export async function listSlotBookingCounts(
 /** Every row — including 'blocked' time off — is born sync-pending; the outbox clears on push
  * success. 'blocked' rows sync as an all-day UNAVAILABLE event the same way a real booking syncs
  * as its own event; only 'external' (Google-owned, materialized by reconcile) is never written
- * here at all. */
+ * here at all. The one exception is a series walk (`seriesId` set): it is inserted with
+ * `syncPending: 0`, because a row with a series never carries its own calendar event — the
+ * series' event does. */
 export async function insertBookingRequest(
   db: D1Database,
   tenantId: string,
@@ -679,14 +681,19 @@ export async function insertBookingRequest(
     answers?: Record<string, string>;
     source?: string | null;
     idempotencyKey?: string | null;
+    /** The series this walk belongs to (0019_booking_series); undefined/null = a single booking. */
+    seriesId?: string | null;
+    /** 1 (the default) arms the calendar outbox for this row; a series walk passes 0, because
+     *  the series' own calendar event already carries it. */
+    syncPending?: 0 | 1;
   },
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db
     .prepare(
       `INSERT INTO BookingRequests
-         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime, EstCost, Answers, Status, Source, IdempotencyKey, SyncPending, SeriesId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -704,7 +711,8 @@ export async function insertBookingRequest(
       row.status,
       row.source ?? null,
       row.idempotencyKey ?? null,
-      1,
+      row.syncPending ?? 1,
+      row.seriesId ?? null,
     )
     .run();
   return id;
@@ -713,7 +721,7 @@ export async function insertBookingRequest(
 /**
  * Insert a booking ADOPTED from an existing Google Calendar event.
  *
- * Deliberately NOT `insertBookingRequest`, which hard-codes `SyncPending = 1`. An adopted row is a
+ * Deliberately NOT `insertBookingRequest`, whose `SyncPending` defaults to 1. An adopted row is a
  * record of an event Google already has: arming the outbox would push a SECOND event for the same
  * stay and break the read-only guarantee the backfill is built on. `GCalEventId` is stamped here
  * instead, so reconcile stops materializing the event as an `'external'` row and treats it as a
@@ -1029,6 +1037,8 @@ function expectedClause(expected?: ExpectedBooking): { sql: string; binds: unkno
  * only valid from 'pending': a confirmed booking is cancelled, never declined.
  *
  * Every transition re-enters the calendar outbox; the push that mirrors it clears the flag.
+ * A series row (`SeriesId` set) is the exception: it never has an event of its own, so it stays
+ * unarmed here (the CASE below) and the caller re-arms its SERIES with `armSeriesSync` instead.
  *
  * `expected` is an optional optimistic-concurrency precondition: the dates, pet count and estimate
  * (CENTS, 0015) the caller was looking at when it decided. It is part of the UPDATE's own WHERE, so
@@ -1050,7 +1060,7 @@ export async function updateBookingStatus(
   if (status === 'cancelled' && cancellationFee != null) {
     const result = await db
       .prepare(
-        `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = 1
+        `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = CASE WHEN SeriesId IS NULL THEN 1 ELSE SyncPending END
          WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'confirmed'${pre.sql}`,
       )
       .bind(cancellationFee, tenantId, id, ...pre.binds)
@@ -1061,14 +1071,14 @@ export async function updateBookingStatus(
     status === 'declined'
       ? await db
           .prepare(
-            `UPDATE BookingRequests SET Status = 'declined', SyncPending = 1
+            `UPDATE BookingRequests SET Status = 'declined', SyncPending = CASE WHEN SeriesId IS NULL THEN 1 ELSE SyncPending END
              WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external') AND Status = 'pending'${pre.sql}`,
           )
           .bind(tenantId, id, ...pre.binds)
           .run()
       : await db
           .prepare(
-            `UPDATE BookingRequests SET Status = ?, SyncPending = 1
+            `UPDATE BookingRequests SET Status = ?, SyncPending = CASE WHEN SeriesId IS NULL THEN 1 ELSE SyncPending END
              WHERE TenantId = ? AND Id = ? AND ServiceType NOT IN ('blocked', 'external')
                AND Status NOT IN ('cancelled', 'declined')${pre.sql}`,
           )
@@ -1133,7 +1143,7 @@ export async function cancelBookingForUser(
 ): Promise<boolean> {
   const result = await db
     .prepare(
-      `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = 1
+      `UPDATE BookingRequests SET Status = 'cancelled', CancellationFee = ?, SyncPending = CASE WHEN SeriesId IS NULL THEN 1 ELSE SyncPending END
        WHERE TenantId = ? AND EndUserId = ? AND Id = ?
          AND ServiceType NOT IN ('blocked', 'external')
          AND Status = ?`,
@@ -1183,7 +1193,7 @@ export async function updateBookingForEdit(
     .prepare(
       `UPDATE BookingRequests
           SET StartDate = ?, EndDate = ?, StartTime = ?, DepartureTime = ?, PetCount = ?,
-              EstCost = ?, Answers = ?, Status = 'pending', SyncPending = 1
+              EstCost = ?, Answers = ?, Status = 'pending', SyncPending = CASE WHEN SeriesId IS NULL THEN 1 ELSE SyncPending END
         WHERE TenantId = ? AND EndUserId = ? AND Id = ?
           AND ServiceType NOT IN ('blocked', 'external')
           AND Status = ?`,
@@ -1203,6 +1213,25 @@ export async function updateBookingForEdit(
     )
     .run();
   return (result.meta as { changes?: number }).changes !== 0;
+}
+
+/**
+ * Re-arm the calendar outbox for a SERIES. A series row never syncs as its own event — the three
+ * `BookingRequests` writers above leave its `SyncPending` alone — so whatever changed one of its
+ * walks marks the series instead, and the series' own mirror (one recurring event) reads that.
+ */
+export async function armSeriesSync(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE BookingSeries SET SyncPending = 1, UpdatedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ?`,
+    )
+    .bind(tenantId, seriesId)
+    .run();
 }
 
 /**
@@ -3899,7 +3928,7 @@ export async function listSyncedBookingIds(
       `SELECT Id FROM BookingRequests
        WHERE TenantId = ? AND GCalEventId IS NOT NULL AND Status NOT IN ('cancelled', 'declined')
          AND ServiceType NOT IN ('external', 'blocked')
-         AND Source IS NOT 'calendar-backfill'
+         AND Source IS NOT 'calendar-backfill' AND SeriesId IS NULL
          AND StartDate < ? AND COALESCE(EndDate, StartDate) >= ?`,
     )
     .bind(tenantId, toDateExclusive, fromDate)
@@ -4861,7 +4890,9 @@ export async function listCustomers(
  *  1. the customer themselves has no BookingRequests; and
  *  2. no pet that this delete WOULD cascade (one stamped with their EndUserId that no other owner
  *     holds a PetOwners edge to) is referenced by BookingRequestPets — including by SOMEONE ELSE's
- *     booking, which co-ownership makes reachable.
+ *     booking, which co-ownership makes reachable — or by another client's series
+ *     (BookingSeriesPets). The customer's own series never block: they carry no rows (guard 1) and
+ *     go with the customer.
  *
  * Either precondition failing refuses the ENTIRE delete: every statement in the batch carries both
  * guards, so the customer, their pets, their ownership edges and their login codes are all left
@@ -4928,7 +4959,12 @@ export async function deleteCustomer(
                 AND NOT EXISTS (SELECT 1 FROM PetOwners po
                                  WHERE po.TenantId = orphan.TenantId AND po.PetId = orphan.Id
                                    AND po.EndUserId <> ?)
-                AND EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id))`;
+                AND (EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id)
+                     OR EXISTS (SELECT 1 FROM BookingSeriesPets bsp
+                                 WHERE bsp.PetId = orphan.Id
+                                   AND bsp.SeriesId NOT IN (SELECT Id FROM BookingSeries
+                                                             WHERE TenantId = orphan.TenantId
+                                                               AND EndUserId = orphan.EndUserId))))`;
   // The EndUsers delete is deliberately LAST (children first — D1 has no ON DELETE CASCADE) and
   // is read off the end rather than by ordinal, as deleteTenantCompletely does: adding a cascade
   // statement in the middle silently renumbered a positional destructure once already.
@@ -4951,6 +4987,30 @@ export async function deleteCustomer(
     db
       .prepare(
         `DELETE FROM PetOwners
+           WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    // This client's own series — skips, pet edges, then the series — go before their pets
+    // (BookingSeriesPets.PetId FKs to EndUserPets) and before the EndUsers row. `bookingGuard`
+    // means none of these series ever produced a row, so nothing here orphans a booking. A series
+    // of SOMEONE ELSE naming this client's pet is `cascadingPetGuard`'s refusal, not a deletion.
+    db
+      .prepare(
+        `DELETE FROM BookingSeriesSkips
+           WHERE SeriesId IN (SELECT Id FROM BookingSeries WHERE TenantId = ? AND EndUserId = ?)
+             AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    db
+      .prepare(
+        `DELETE FROM BookingSeriesPets
+           WHERE SeriesId IN (SELECT Id FROM BookingSeries WHERE TenantId = ? AND EndUserId = ?)
+             AND ${bookingGuard} AND ${cascadingPetGuard}`,
+      )
+      .bind(tenantId, id, tenantId, id, tenantId, id, id),
+    db
+      .prepare(
+        `DELETE FROM BookingSeries
            WHERE TenantId = ? AND EndUserId = ? AND ${bookingGuard} AND ${cascadingPetGuard}`,
       )
       .bind(tenantId, id, tenantId, id, tenantId, id, id),
@@ -5009,8 +5069,12 @@ export async function deleteCustomer(
              AND NOT EXISTS (SELECT 1 FROM PetOwners po
                               WHERE po.TenantId = orphan.TenantId AND po.PetId = orphan.Id
                                 AND po.EndUserId <> ?)
-             AND EXISTS (SELECT 1 FROM BookingRequestPets brp
-                          WHERE brp.PetId = orphan.Id)) AS BookedCascadingPets`,
+             AND (EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = orphan.Id)
+                  OR EXISTS (SELECT 1 FROM BookingSeriesPets bsp
+                              WHERE bsp.PetId = orphan.Id
+                                AND bsp.SeriesId NOT IN (SELECT Id FROM BookingSeries
+                                                          WHERE TenantId = orphan.TenantId
+                                                            AND EndUserId = orphan.EndUserId)))) AS BookedCascadingPets`,
     )
     .bind(tenantId, id, tenantId, id, id)
     .first<{ OwnBookings: number; BookedCascadingPets: number }>();
@@ -5303,14 +5367,17 @@ export async function removeEndUserPet(
   tenantId: string,
   petId: string,
 ): Promise<'removed' | 'not-found' | 'has-bookings'> {
-  const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = ?)`;
+  // A pet on a series (BookingSeriesPets) is as undeletable as one on a booking: refuse cleanly
+  // rather than trip the foreign key.
+  const bookingGuard = `NOT EXISTS (SELECT 1 FROM BookingRequestPets brp WHERE brp.PetId = ?)
+    AND NOT EXISTS (SELECT 1 FROM BookingSeriesPets bsp WHERE bsp.PetId = ?)`;
   const [, petResult] = await db.batch([
     db
       .prepare(`DELETE FROM PetOwners WHERE TenantId = ? AND PetId = ? AND ${bookingGuard}`)
-      .bind(tenantId, petId, petId),
+      .bind(tenantId, petId, petId, petId),
     db
       .prepare(`DELETE FROM EndUserPets WHERE TenantId = ? AND Id = ? AND ${bookingGuard}`)
-      .bind(tenantId, petId, petId),
+      .bind(tenantId, petId, petId, petId),
   ]);
   if ((petResult.meta as { changes?: number }).changes !== 0) return 'removed';
   // Refused, and nothing was written. One read to choose which refusal it was: a pet that is not
@@ -5739,7 +5806,7 @@ export async function listUnsyncedFutureBookings(
     .prepare(
       `SELECT ${BOOKING_SYNC_COLS} ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.GCalEventId IS NULL AND b.Status IN ('pending', 'confirmed')
-         AND b.ServiceType != 'external' AND COALESCE(b.EndDate, b.StartDate) >= ?
+         AND b.ServiceType != 'external' AND b.SeriesId IS NULL AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
        LIMIT ?`,
     )
@@ -5796,6 +5863,7 @@ export async function listSyncPendingBookings(
               b.GCalEventId AS GCalEventId ${BOOKING_SYNC_JOINS}
        WHERE b.TenantId = ? AND b.SyncPending = 1
          AND b.ServiceType != 'external'
+         AND b.SeriesId IS NULL
          AND b.Source IS NOT 'calendar-backfill'
          AND COALESCE(b.EndDate, b.StartDate) >= ?
        ORDER BY b.StartDate
@@ -6263,6 +6331,16 @@ export async function applyBillingEvent(
 export async function deleteTenantCompletely(db: D1Database, tenantId: string): Promise<boolean> {
   const results = await db.batch([
     db.prepare('DELETE FROM PetOwners WHERE TenantId = ?').bind(tenantId),
+    // A series' skips and pet edges FK to the series and (pets) to EndUserPets, and the series FKs
+    // to EndUsers, so all three go before those. `BookingRequests.SeriesId` has no REFERENCES.
+    db.prepare('DELETE FROM BookingSeriesSkips WHERE TenantId = ?').bind(tenantId),
+    db
+      .prepare(
+        `DELETE FROM BookingSeriesPets
+           WHERE SeriesId IN (SELECT Id FROM BookingSeries WHERE TenantId = ?)`,
+      )
+      .bind(tenantId),
+    db.prepare('DELETE FROM BookingSeries WHERE TenantId = ?').bind(tenantId),
     db
       .prepare(
         `DELETE FROM BookingRequestPets
