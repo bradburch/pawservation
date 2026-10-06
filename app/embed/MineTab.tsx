@@ -39,15 +39,16 @@ function whenText(b: Booking): string {
  * follows the widget's own resize protocol (App.tsx / public/embed.js) — the framed page posts
  * `{ type: 'pawservation:resize', height: number }` and this listener applies it.
  *
- * Two things that card does not need, because this one lives inside a widget that is itself an
- * auto-resizing iframe on somebody else's page:
- *  - It starts at ZERO height and grows only once the framed page reports one. A page that never
- *    loads — origin unreachable, entitlement lapsed between two reads, a blocked request — never
- *    posts, so it never takes up space and never bounces the host page. Nothing
- *    unmounts it on failure: browsers fire no `error` event for an iframe, so the frame simply
- *    stays at zero height. The booking form and the list above are unaffected either way.
- *  - `event.source` is checked as well as `event.origin`. The audit card is the only frame on its
- *    page; the widget is not the only thing on the host page that may post to it.
+ * Like that card, it starts at ZERO height and grows only once the framed page reports one. A page
+ * that never loads — origin unreachable, entitlement lapsed between two reads, a blocked request —
+ * never posts, so it never takes up space and never bounces the host page. Nothing unmounts it on
+ * failure: browsers fire no `error` event for an iframe, so the frame simply stays at zero height.
+ * The booking form and the list above are unaffected either way.
+ *
+ * One thing that card does not need, because this one lives inside a widget that is itself an
+ * auto-resizing iframe on somebody else's page: `event.source` is checked as well as
+ * `event.origin`. The audit card is the only frame on its page; the widget is not the only thing
+ * on the host page that may post to it.
  */
 function PaidSurfaceEmbed({ config }: { config: TenantConfig }) {
   const origin = config.premium?.chat === true ? config.premium.origin : null;
