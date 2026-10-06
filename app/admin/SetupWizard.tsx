@@ -10,6 +10,7 @@ import {
   type ServiceOptionForm,
   type Settings,
 } from './shared.js';
+import { browserTimezone } from './timezones.js';
 import {
   makeProfileDraft,
   profilePutBody,
@@ -70,6 +71,9 @@ export function SetupWizard({
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => ({
     ...makeProfileDraft(settings),
     contactEmail: settings.contactEmail ?? (neverOnboarded ? (settings.adminEmail ?? '') : ''),
+    // Same suggest-then-confirm shape for the timezone: the browser's own zone, shown in the
+    // dropdown and saved on Next, rather than the instance default's coast.
+    timezone: settings.timezone ?? (neverOnboarded ? browserTimezone() : ''),
   }));
   // Snapshot the profile PUT diffs against; advanced to the saved draft after each successful
   // save so Back-then-Next doesn't resend fields (resending is harmless, just noisy).
@@ -590,7 +594,11 @@ export function SetupWizard({
               — only people on that list can book with you.
             </p>
             <p>
-              Ready to take bookings from your own site? Grab the snippet under{' '}
+              No website? Send clients your booking link:{' '}
+              <a href={`/embed/${encodeURIComponent(slug)}`} target="_blank" rel="noreferrer">
+                {`${window.location.origin}/embed/${slug}`}
+              </a>
+              . Have one? Grab the snippet under{' '}
               <a href="#embed" onClick={onClose}>
                 Your website
               </a>

@@ -86,14 +86,7 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  // "New here?" — invite-signup kickoff. Always answers with the same neutral copy
-  // (the server is enumeration-neutral; don't undo that in the UI).
-  const [signupOpen, setSignupOpen] = useState(false);
-  const [signupEmail, setSignupEmail] = useState('');
-  const [signupSent, setSignupSent] = useState(false);
-  const [prototypeLink, setPrototypeLink] = useState('');
-  const [signupBusy, setSignupBusy] = useState(false);
-  // "Forgot password?" — same neutral-response shape as the signup toggle above; the server
+  // "Forgot password?" — a neutral-response toggle; the server
   // never reveals whether the email has an account (see /api/password-reset/start).
   const [resetOpen, setResetOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
@@ -143,34 +136,6 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
     }
   };
 
-  const startSignup = async () => {
-    if (signupBusy) return;
-    setError('');
-    setSignupBusy(true);
-    try {
-      const res = await fetch('/api/signup/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: signupEmail }),
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        prototypeLink?: string;
-        error?: string;
-      };
-      if (!res.ok) {
-        setError(body.error ?? 'Try again.');
-        return;
-      }
-      setSignupSent(true);
-      setPrototypeLink(body.prototypeLink ?? '');
-    } catch {
-      setError('Could not reach the server.');
-    } finally {
-      setSignupBusy(false);
-    }
-  };
-
   const startReset = async () => {
     if (resetBusy) return;
     setError('');
@@ -201,7 +166,7 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
 
   return (
     <div className="pb-wrap pb-login">
-      {!signupOpen && !resetOpen && (
+      {!resetOpen && (
         <>
           <h1>Welcome back</h1>
           <label>
@@ -229,52 +194,17 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
           </button>
         </>
       )}
+      {/* ONE way in for a new sitter: /signup, the Turnstile-guarded front door. It serves
+          invited sitters and owners too, so the old inline "Get set up" form is gone. */}
+      {!resetOpen && (
+        <div className="pb-login-signup">
+          <a className="pb-linklike" href="/signup">
+            New here? Sign up
+          </a>
+        </div>
+      )}
       <div className="pb-login-signup">
-        {resetOpen ? null : !signupOpen ? (
-          <>
-            <button type="button" className="pb-linklike" onClick={() => setSignupOpen(true)}>
-              New here? Enter your email to get set up
-            </button>
-            {/* This toggle is allowlist-only (/api/signup/start never adds a row); a sitter with
-                no invite signs up at /signup, the Turnstile-guarded front door. */}
-            <a className="pb-linklike" href="/signup">
-              Not invited yet? Sign up
-            </a>
-          </>
-        ) : signupSent ? (
-          <>
-            <p>
-              Check your email — if you&rsquo;ve been invited, a setup link is on its way. Not
-              invited yet? <a href="/signup">Sign up here</a>.
-            </p>
-            {prototypeLink && (
-              <p>
-                {/* Dev only: the server includes prototypeLink when no email provider is
-                    configured (mirrors the widget's prototypeCode). */}
-                <a href={prototypeLink}>Open your setup link (dev)</a>
-              </p>
-            )}
-          </>
-        ) : (
-          <>
-            <label>
-              Your email
-              <input
-                type="email"
-                value={signupEmail}
-                autoComplete="email"
-                onChange={(e) => setSignupEmail(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void startSignup()}
-              />
-            </label>
-            <button type="button" onClick={startSignup} disabled={signupBusy}>
-              {signupBusy ? 'Sending…' : 'Get set up'}
-            </button>
-          </>
-        )}
-      </div>
-      <div className="pb-login-signup">
-        {signupOpen ? null : !resetOpen ? (
+        {!resetOpen ? (
           <button type="button" className="pb-linklike" onClick={() => setResetOpen(true)}>
             Forgot password?
           </button>
@@ -284,7 +214,7 @@ function Login({ onLogin }: { onLogin: (s: AnySession) => void }) {
             {resetPrototypeLink && (
               <p>
                 {/* Dev only: the server includes prototypeLink when no email provider is
-                    configured (mirrors the signup toggle above). */}
+                    configured (mirrors /signup's local-development link). */}
                 <a href={resetPrototypeLink}>Open your reset link (dev)</a>
               </p>
             )}
@@ -463,6 +393,7 @@ function SettingsMenu({ activeSection }: { activeSection: SectionKey }) {
 const planFieldsOf = (s: Settings) => ({
   plan: s.plan,
   billedUntil: s.billedUntil,
+  compedUntil: s.compedUntil,
   planActive: s.planActive,
   hasBillingAccount: s.hasBillingAccount,
   planCurrent: s.planCurrent,

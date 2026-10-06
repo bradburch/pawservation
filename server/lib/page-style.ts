@@ -840,6 +840,9 @@ export const PAGE_STYLE = /* css */ `
         padding: clamp(44px, 7vw, 72px) clamp(24px, 6vw, 72px);
         text-align: center;
       }
+      /* h1 too: the /signup pages put their h1 on this panel, and unstyled it inherited the page's
+         ink, invisible on the dark green. */
+      .cta-panel h1,
       .cta-panel h2 {
         color: #fff;
         font-size: clamp(1.7rem, 3.6vw, 2.3rem);

@@ -780,7 +780,10 @@ export function OwnerConsole({
 
       {tab === 'allowlist' && (
         <div className="pb-card pb-owner-console">
-          <p>Add a sitter&rsquo;s email — then tell them to go to the sign-in page and enter it.</p>
+          <p>
+            Add a sitter&rsquo;s email — then tell them to go to pawservation.com/signup and enter
+            it.
+          </p>
           <label>
             Email
             <input

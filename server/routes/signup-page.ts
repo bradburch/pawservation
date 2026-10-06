@@ -118,31 +118,42 @@ function shell(title: string, body: string, opts: { turnstile?: boolean } = {}):
 
 function renderSignupPage(env: Env, opts: { email?: string; error?: string } = {}): string {
   const siteKey = turnstileState(env) === 'on' ? env.TURNSTILE_SITE_KEY : undefined;
+  const review = signupMode(env) === 'review';
+  // Review mode promises no speed: a person reads each request (README, "Provisioning").
+  const intro = review
+    ? 'Enter your email and we&rsquo;ll be in touch within a day to set up your account.'
+    : `Enter your email to start your ${PRICING.trialDays}-day free trial. We&rsquo;ll email you a link to set your password.`;
   const lead = opts.error
     ? `<p class="note" role="alert" style="color:#fff;margin:0 auto 8px;font-size:1rem;">${opts.error}</p>`
-    : `<p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">Enter your email and we&rsquo;ll email you a sign-up link. It takes a minute, and your first ${PRICING.trialDays} days are free.</p>`;
+    : `<p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">${intro}</p>`;
   return shell(
     'Pawservation: sign up',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">Sign up for Pawservation</h1>
         ${lead}
-        ${renderSignupForm({ email: opts.email, siteKey })}`,
+        ${renderSignupForm({
+          email: opts.email,
+          siteKey,
+          submitLabel: review ? 'Ask for an account' : 'Start my free trial',
+        })}`,
     { turnstile: Boolean(siteKey) },
   );
 }
 
+/** Mode-dependent, address-independent. No primary button: a sitter who just signed up has
+ * nothing to sign in to yet, so the useful next step is the setup guide. */
 function renderSentPage(mode: SignupMode, prototypeLink?: string): string {
-  const copy =
-    mode === 'open'
-      ? 'Check your email. If that address can sign up, a sign-up link is on its way; it works for 30 minutes. Already have an account? Sign in instead.'
-      : 'Thanks. We&rsquo;ll email you a sign-up link once we&rsquo;ve set you up. Already have an account? Sign in instead.';
+  const open = mode === 'open';
+  const copy = open
+    ? 'If that address can sign up, your link is on its way. It works for 30 minutes.'
+    : 'We&rsquo;ll email you within a day, once your account is ready.';
   const dev = prototypeLink
     ? `<p class="note" style="margin:12px auto 0;"><a href="${htmlEscape(prototypeLink)}" style="color:#fff;">Open your sign-up link (local development)</a></p>`
     : '';
   return shell(
-    'Pawservation: check your email',
-    `<h1 style="font-size:1.6rem;margin:0 0 8px;">${mode === 'open' ? 'Check your email' : 'Thanks, we&rsquo;ve got it'}</h1>
+    open ? 'Pawservation: Check your email' : 'Pawservation: request received',
+    `<h1 style="font-size:1.6rem;margin:0 0 8px;">${open ? 'Check your email' : 'Thanks, we&rsquo;ve got it'}</h1>
         <p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">${copy}</p>${dev}
-        <p style="margin:20px 0 0;"><a class="btn btn-inverse" href="/admin">Sign in</a></p>`,
+        <p class="note" style="color:#c4d2c6;margin:12px auto 0;">While you wait, read <a href="/getting-started" style="color:#fff;">the setup guide</a>. Already have an account? <a href="/admin" style="color:#fff;">Sign in</a>.</p>`,
   );
 }
 

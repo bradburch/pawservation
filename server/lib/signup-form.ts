@@ -2,21 +2,18 @@ import { htmlEscape } from './email';
 import { SIGNUP_ACTION, TURNSTILE_SCRIPT_ORIGIN } from './turnstile';
 
 /**
- * The sign-up `<form>`, shared by the landing page's closing panel (server/index.ts, no widget)
- * and the /signup page (routes/signup-page.ts, with the widget when Turnstile is configured).
- * A leaf module, like PAGE_STYLE, so index.ts and the route can both import it.
- *
- * Why the landing variant carries no widget: `/` is served under LOCKED_CSP and is script-free by
- * doctrine (marketing-pages skill), and Turnstile is a cross-origin script plus a cross-origin
- * iframe. So the landing form posts the email to /signup, which answers with the same form, the
- * email kept, and the widget — the one page whose CSP admits challenges.cloudflare.com. When
- * Turnstile is off (local development) the same POST is processed straight away.
+ * The sign-up `<form>` on /signup (routes/signup-page.ts), with the widget when Turnstile is
+ * configured. Every "Sign up" on the marketing pages is a plain LINK to /signup rather than a form
+ * of its own: `/` is script-free under LOCKED_CSP, so a form there could not carry the widget and
+ * made the sitter submit twice (once there, once on the challenge).
  *
  * The widget is Turnstile's IMPLICIT render: its script finds the `.cf-turnstile` div and adds a
  * hidden `cf-turnstile-response` input to this form, so a native form POST carries the token and
  * the page needs no script of its own. The honeypot is named "fax" (the old invite form's name).
  */
-export function renderSignupForm(opts: { email?: string; siteKey?: string } = {}): string {
+export function renderSignupForm(
+  opts: { email?: string; siteKey?: string; submitLabel?: string } = {},
+): string {
   const widget = opts.siteKey
     ? `
               <div class="signup-field signup-field-wide">
@@ -33,7 +30,7 @@ export function renderSignupForm(opts: { email?: string; siteKey?: string } = {}
                 <input id="signup-fax" name="fax" type="text" tabindex="-1" aria-hidden="true" autocomplete="one-time-code" />
               </div>
               <div class="signup-submit">
-                <button class="btn btn-inverse" type="submit">Email me a sign-up link</button>
+                <button class="btn btn-inverse" type="submit">${opts.submitLabel ?? 'Start my free trial'}</button>
                 <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
               </div>
             </form>`;

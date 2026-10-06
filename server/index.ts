@@ -8,7 +8,6 @@ import {
   buildProductJsonLdScript,
   buildProductLlmsTxt,
 } from './lib/llms';
-import { renderSignupForm } from './lib/signup-form';
 import { TURNSTILE_SCRIPT_ORIGIN } from './lib/turnstile';
 import { requestContext } from './lib/log';
 import { tenantMiddleware } from './lib/middleware';
@@ -403,7 +402,7 @@ const LANDING_HTML = `<!doctype html>
           <a class="signin nav-tour" href="/how-it-works">Full tour</a>
           <a class="signin nav-signin" href="/admin">Sign in</a>
           <a class="signin" href="/demo">Try the demo</a>
-          <a class="btn btn-primary btn-sm" href="#invite-h">Sign up</a>
+          <a class="btn btn-primary btn-sm" href="/signup">Sign up</a>
         </div>
       </div>
     </header>
@@ -425,12 +424,12 @@ const LANDING_HTML = `<!doctype html>
               they owe. You still confirm every booking, so the relationship stays yours.
             </p>
             <div class="cta-row">
-              <a class="btn btn-primary" href="#invite-h">Sign up</a>
+              <a class="btn btn-primary" href="/signup">Sign up</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
             <p class="note">
               The demo is there so you can poke around without signing up for anything.
-              When you&rsquo;re ready, <a href="#invite-h">sign up</a> with just your email, or
+              When you&rsquo;re ready, <a href="/signup">sign up</a> with just your email, or
               <a href="/admin">sign in</a> if you already have an account.
             </p>
           </div>
@@ -604,7 +603,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
         </div>
@@ -684,7 +683,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
         </div>
@@ -724,7 +723,7 @@ const LANDING_HTML = `<!doctype html>
             </div>
           </div>
           <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="#pricing">See Pro pricing</a>
           </div>
         </div>
@@ -760,7 +759,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Client accounts and pet records</li>
                 <li>Google Calendar sync, both directions</li>
               </ul>
-              <a class="btn btn-primary" href="#invite-h">Sign up</a>
+              <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">The first ${PRICING.trialDays} days are free. Sign up with your email and we&rsquo;ll email you a sign-up link.</p>
             </div>
             <div class="price-card">
@@ -780,12 +779,12 @@ const LANDING_HTML = `<!doctype html>
                 <li>Card payments through your own Stripe account: deposits, saved cards, and the balance charged after each stay, at Stripe&rsquo;s published rate with no fee from Pawservation</li>
                 <li>Extra sitters, with assignment</li>
               </ul>
-              <a class="btn btn-primary" href="#invite-h">Sign up</a>
+              <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">$${PRICING.proMonthly} per sitter per month, or $${PRICING.proAnnual} per sitter per year, which is $${PRICING.proMonthly * 12 - PRICING.proAnnual} less than paying by the month.</p>
             </div>
           </div>
           <p class="note wf-more">
-            <a href="#invite-h">Sign up</a> and we&rsquo;ll get you started.
+            <a href="/signup">Sign up</a> and we&rsquo;ll get you started.
           </p>
         </div>
       </section>
@@ -818,7 +817,10 @@ const LANDING_HTML = `<!doctype html>
           <div class="cta-panel">
             <h2 id="invite-h">Sign up</h2>
             <p>Enter your email and we&rsquo;ll email you a sign-up link. Then set up your services, rates, and booking page.</p>
-            ${renderSignupForm()}
+            <div class="cta-row">
+              <a class="btn btn-inverse" href="/signup">Sign up</a>
+              <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
+            </div>
           </div>
         </div>
       </section>
@@ -896,7 +898,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             decline from your phone. Your calendar stays yours.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="/#invite-h">Sign up</a>
+            <a class="btn btn-primary" href="/signup">Sign up</a>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
           <p class="note">
@@ -1192,7 +1194,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <h2 id="tour-cta-h">Sign up when you are ready</h2>
             <p>Enter your email and we will email you a sign-up link; the wizard then sets up your services, rates and booking page. Or poke at the demo first: nothing to sign up for and nothing you can break.</p>
             <div class="cta-row">
-              <a class="btn btn-inverse" href="/#invite-h">Sign up</a>
+              <a class="btn btn-inverse" href="/signup">Sign up</a>
               <a class="signin-inverse" href="/demo">Try the demo</a>
               <a class="signin-inverse" href="/#pricing">See pricing</a>
             </div>
@@ -1545,7 +1547,7 @@ const CONTACT_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>You run a pet-care business and want an account</h2>
-            <p>Use the <a href="/#invite-h">sign-up form on the homepage</a>. Enter your email and we&rsquo;ll email you a sign-up link; from there you set up your services, rates and booking page.</p>
+            <p>Use the <a href="/signup">sign-up page</a>. Enter your email and we&rsquo;ll email you a sign-up link; from there you set up your services, rates and booking page.</p>
           </div>
           <div class="feature">
             <h2>You already have an account and something is wrong</h2>

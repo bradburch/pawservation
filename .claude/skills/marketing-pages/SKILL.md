@@ -35,8 +35,8 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   only beside the sentence that we email a sign-up link, which `/signup` does (see the next rule).
 - **`/signup` is the ONE page with a third-party script**: Cloudflare Turnstile's widget, which
   needs `script-src` and `frame-src` for `https://challenges.cloudflare.com`. The header middleware
-  adds both for that exact path and nowhere else; the landing form carries no widget and posts
-  the email to `/signup`, which answers with the challenge. `/request-invite` and its thanks page
+  adds both for that exact path and nowhere else; every "Sign up" on the marketing pages is a
+  plain link to `/signup` (no form on `/`, which made the sitter submit twice). `/request-invite` and its thanks page
   are retired and 301 to `/signup`.
 
 ## `pageHead` and the canonical

@@ -41,8 +41,10 @@ const CompleteBody = v.object({
   businessName: v.optional(v.pipe(v.string(), v.trim())),
 });
 
+/** The /setup page links "Get a new link" to /signup beside any error starting "This link has
+ * expired" (app/setup/App.tsx). Password reset has its own sentence, pointing at the sign-in page. */
 export const EXPIRED_ERROR =
-  'This link has expired or was already used — enter your email on the sign-in page to get a fresh one.';
+  'This link has expired or was already used. Get a new link from the sign-up page.';
 export const ALREADY_SET_UP_ERROR = 'This email is already set up — sign in instead.';
 export const RETRYABLE_ERROR = 'Something went wrong — please try again.';
 

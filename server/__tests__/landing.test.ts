@@ -67,16 +67,17 @@ describe('GET / — landing page', () => {
     expect(body).toContain('data-pawservation-tenant');
   });
 
-  it('has exactly one on-page sign-up form posting to /signup, no mailto anywhere', async () => {
+  it('sends every Sign up straight to /signup: no form here, no anchor hop, no mailto', async () => {
     const body = await landingBody();
     expect(body).not.toMatch(/href="mailto:/);
-    expect(body.match(/<form\b/g)?.length).toBe(1);
-    expect(body).toContain('<form class="signup-form" method="post" action="/signup">');
-    expect(body).toContain('name="email"');
-    expect(body).toContain('name="fax"'); // honeypot field
+    // One page, one form: a form here made the sitter submit twice (here, then the challenge).
+    expect(body).not.toMatch(/<form\b/);
+    expect(body).not.toContain('href="#invite-h"');
+    expect(body).not.toContain('href="/#invite-h"');
+    expect(body).toContain('<a class="btn btn-inverse" href="/signup">Sign up</a>');
+    expect(body.match(/href="\/signup"/g)!.length).toBeGreaterThanOrEqual(8);
     // The widget lives on /signup, never here: this page stays script-free.
     expect(body).not.toContain('cf-turnstile');
-    expect(body).toContain('email you a sign-up link');
   });
 
   it('makes no multi-pet pricing claim (rates ship with pet-mix-rates)', async () => {
@@ -435,7 +436,6 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('Ask for an invite');
     expect(body).toContain('<h2 id="invite-h">Sign up</h2>');
     expect(body).toContain('email you a sign-up link');
-    expect(body).toContain('type="submit">Email me a sign-up link</button>');
     expect(body).not.toContain('added by hand');
   });
 

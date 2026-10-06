@@ -15,3 +15,22 @@ export const TIMEZONES: string[] =
         'Europe/Paris',
         'Australia/Sydney',
       ];
+
+/** The browser's own zone when the picker lists it, else '' (= the instance default). A new
+ * business's timezone defaults to where the sitter is sitting rather than to a coast she may not
+ * be on; the setup wizard shows it in the dropdown before anything is saved. */
+export function pickTimezone(
+  zone: string | undefined,
+  list: readonly string[] = TIMEZONES,
+): string {
+  return zone && list.includes(zone) ? zone : '';
+}
+
+/** `pickTimezone` over what this browser reports; '' if Intl cannot say. */
+export function browserTimezone(): string {
+  try {
+    return pickTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  } catch {
+    return '';
+  }
+}

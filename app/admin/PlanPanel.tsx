@@ -79,6 +79,10 @@ import { Hint } from './Hint';
  *  recognise. The browser's own `TypeError: Failed to fetch` is not a plan problem and must not be
  *  rendered as one — and neither is a 401 or 403 from the other worker, for the reason the `!res.ok`
  *  branch below gives. */
+/** Under the "Free trial" status line. */
+const TRIAL_IS_SOLO =
+  'Your trial includes everything in Solo. The booking assistant, booking by WhatsApp and card payments need Pro.';
+
 const CHECKOUT_FAILED = 'Could not start checkout — try again.';
 
 /** The sibling of CHECKOUT_FAILED, for the other hosted page. Same rule: this is the ONE message
@@ -307,8 +311,25 @@ export function PlanPanel({
    * as nothing at all: the line would show a date with no plan in front of it. A render on a stale
    * bundle/API pair must degrade to the honest answer, never throw and never print a blank.
    */
+  const hasPlan = settings.plan === 'solo' || settings.plan === 'pro';
+  /**
+   * THE SIGNUP TRIAL, which is a comp with no plan row: `planCurrent` (the server's answer) says a
+   * grant is live and `compedUntil` is its date, rendered only. Without this a sitter on day one
+   * of her trial read "No plan yet". Same non-empty-string rule as `paidThrough` below.
+   */
+  const trialUntil =
+    !hasPlan &&
+    settings.planCurrent === true &&
+    typeof settings.compedUntil === 'string' &&
+    settings.compedUntil !== ''
+      ? formatTimestamp(settings.compedUntil)
+      : null;
   const planName =
-    settings.plan === 'solo' || settings.plan === 'pro' ? PLAN_NAMES[settings.plan] : 'No plan yet';
+    settings.plan === 'solo' || settings.plan === 'pro'
+      ? PLAN_NAMES[settings.plan]
+      : trialUntil !== null
+        ? 'Free trial'
+        : 'No plan yet';
   /**
    * RENDERED, never compared. `planActive` is the server's answer to "is it live"; this string is
    * only ever the date beside it.
@@ -545,7 +566,10 @@ export function PlanPanel({
       <p>
         <strong>{planName}</strong>
         {!settings.disabled && paidThrough !== null && ` — ${paidThroughWord} ${paidThrough}`}
+        {!settings.disabled && trialUntil !== null && ` until ${trialUntil}`}
       </p>
+      {/* The trial is a Solo-level comp: say so, so Pro's extras are not a surprise. */}
+      {!settings.disabled && trialUntil !== null && <p className="pb-hint">{TRIAL_IS_SOLO}</p>}
       {settings.disabled && <p className="pb-hint">{ACCOUNT_OFF}</p>}
       {/* SUBSCRIBE HIDES ON A LIVE PLAN, which is the UI half of the double-subscription question;
           the other half is a server-side refusal on the checkout route, which is the paid surface's

@@ -126,6 +126,33 @@ describe('GET /signup', () => {
   });
 });
 
+describe('the sign-up pages read well', () => {
+  it('styles the h1 on the dark panel (it was ink-on-green, invisible)', async () => {
+    const { PAGE_STYLE } = await import('../lib/page-style');
+    expect(PAGE_STYLE).toMatch(/\.cta-panel h1[^{]*\{[^}]*color: #fff/);
+  });
+
+  it('/signup leads with the trial, and says "sign-up link" at most once', async () => {
+    const { env } = createTestEnv();
+    configure(env);
+    const body = await (await app.request('/signup', {}, env)).text();
+    expect(body).toContain('start your 30-day free trial');
+    expect(body.match(/sign-up link/g)?.length ?? 0).toBeLessThanOrEqual(1);
+  });
+
+  it('/signup/sent says each thing once, offers the setup guide, and has no big Sign in button', async () => {
+    const { env } = createTestEnv();
+    configure(env);
+    const body = await (await app.request('/signup/sent', {}, env)).text();
+    expect(body.match(/Check your email/g)).toHaveLength(2); // <title> and <h1>, never the body copy
+    expect(body).toContain('href="/getting-started"');
+    expect(body).not.toContain('class="btn btn-inverse" href="/admin"');
+    configure(env, { mode: 'review' });
+    const review = await (await app.request('/signup/sent', {}, env)).text();
+    expect(review.match(/Thanks/g)).toHaveLength(1);
+  });
+});
+
 describe('POST /signup — open mode (the default)', () => {
   it('verifies the token, allowlists the new email, emails her the link and tells the owner', async () => {
     const { env, raw } = createTestEnv();
@@ -272,10 +299,20 @@ describe('POST /signup — review mode (SIGNUP_MODE=review)', () => {
     const { env } = createTestEnv();
     configure(env, { mode: 'review' });
     const body = await (await app.request('/signup/sent', {}, env)).text();
-    expect(body).toContain('once we&rsquo;ve set you up');
+    expect(body).toContain('within a day');
+    expect(body).not.toContain('30 minutes');
     configure(env, { mode: 'open' });
     const open = await (await app.request('/signup/sent', {}, env)).text();
     expect(open).toContain('Check your email');
+    expect(open).toContain('30 minutes');
+  });
+
+  it('review mode never promises speed on the sign-up page itself', async () => {
+    const { env } = createTestEnv();
+    configure(env, { mode: 'review' });
+    const body = await (await app.request('/signup', {}, env)).text();
+    expect(body).toContain('within a day');
+    expect(body).not.toMatch(/a minute|30-day free trial/);
   });
 
   it('only the exact string "review" turns review on; anything else is open', async () => {
@@ -325,6 +362,25 @@ describe('POST /signup — Turnstile', () => {
       expect(logged).not.toContain('203.0.113.7');
     });
   }
+
+  it("accepts Cloudflare's always-pass TEST secret, whose verdict has no action and hostname example.com", async () => {
+    const { env, raw } = createTestEnv();
+    configure(env);
+    env.TURNSTILE_SECRET_KEY = '1x0000000000000000000000000000000AA';
+    // The real shape Siteverify returns for the documented test secret.
+    fakeFetch({ success: true, hostname: 'example.com', action: '', 'error-codes': [] });
+    const res = await submit(env, NEW_EMAIL);
+    expect(res.status).toBe(303);
+    expect(allowRow(raw, NEW_EMAIL)).toBeDefined();
+  });
+
+  it('a REAL secret still refuses that same example.com / no-action verdict', async () => {
+    const { env } = createTestEnv();
+    configure(env);
+    fakeFetch({ success: true, hostname: 'example.com', action: '', 'error-codes': [] });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect((await submit(env, NEW_EMAIL)).status).toBe(400);
+  });
 
   it('fails closed outside development when Turnstile is not (fully) configured: 503 for every input', async () => {
     for (const partial of [{}, { TURNSTILE_SITE_KEY: SITE_KEY }, { TURNSTILE_SECRET_KEY: 's' }]) {

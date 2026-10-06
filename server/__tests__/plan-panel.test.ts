@@ -314,13 +314,15 @@ describe('where the panel sits', () => {
 });
 
 describe('the plan status line', () => {
-  it('reads the three status fields from the settings payload, and no others', () => {
+  it('reads the status fields from the settings payload, and no others', () => {
     // Through the NAME LOOKUP, not a bare `settings.plan`: `toContain('settings.plan')` is
     // satisfied by `settings.planActive` on the line below it, so the plan-name read could be
     // deleted outright and this case would stay green on the strength of a different field.
     expect(PANEL).toContain('PLAN_NAMES[settings.plan]');
     expect(PANEL).toContain('settings.billedUntil');
     expect(PANEL).toContain('settings.planActive');
+    // The signup trial's end date: a comp, rendered as "Free trial until …".
+    expect(PANEL).toContain('settings.compedUntil');
     // The processor's ids are not status. Neither is needed to say what she is on and until when,
     // and both would be ids handed to a browser for nothing.
     expect(PANEL).not.toContain('stripeSubscriptionId');

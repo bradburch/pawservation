@@ -18,6 +18,12 @@ const SITEVERIFY_URL = `${TURNSTILE_SCRIPT_ORIGIN}/turnstile/v0/siteverify`;
  * other form (on any site sharing the widget) cannot be replayed here. */
 export const SIGNUP_ACTION = 'signup';
 const MAX_TOKEN_LENGTH = 2048;
+/** Cloudflare's published dummy secrets: always passes, always fails, token already spent. */
+const TEST_SECRETS = new Set([
+  '1x0000000000000000000000000000000AA',
+  '2x0000000000000000000000000000000AA',
+  '3x0000000000000000000000000000000AA',
+]);
 
 export type TurnstileState = 'on' | 'off-dev' | 'missing';
 
@@ -61,10 +67,15 @@ export async function verifyTurnstile(
     });
     return false;
   }
+  // ponytail: Cloudflare's documented TEST secrets answer with hostname "example.com" and an empty
+  // action, so the binding checks below could never pass with them. They are public strings that
+  // protect nothing anyway (the always-pass one passes every token), so with one of them `success`
+  // alone decides, which is what lets the dev/test keys exercise this path end to end.
+  // https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+  const testSecret = TEST_SECRETS.has(env.TURNSTILE_SECRET_KEY ?? '');
   if (
     result.success === true &&
-    result.action === SIGNUP_ACTION &&
-    result.hostname === ctx.hostname
+    (testSecret || (result.action === SIGNUP_ACTION && result.hostname === ctx.hostname))
   )
     return true;
   const codes = Array.isArray(result['error-codes'])

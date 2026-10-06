@@ -668,19 +668,19 @@ Signup is sitter-initiated, and `SIGNUP_MODE` decides who gets in:
   the flow below. It is a secret rather than a var so it survives CI's deploys.
 
 `/signup` needs `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` (both `wrangler secret put`);
-without them it answers 503 outside local development. The `/admin` "Get set up" form is
-allowlist-only in either mode.
+without them it answers 503 outside local development. `/admin`'s "New here? Sign up" links
+there; the older JSON route `POST /api/signup/start` stays allowlist-only in either mode.
 
 The invited path:
 
 1. **Bootstrap yourself as owner:** put your email in the `OWNER_EMAILS` secret, open
-   `/admin`, and use the "Get set up" form with that email. You'll receive a single-use
+   `/signup`, and enter that email. You'll receive a single-use
    setup link (`/setup?t=…`) to choose a password — that logs you into the **owner
    console**.
 2. **Allowlist the sitter:** in the owner console, add the sitter's email to the
    allowlist.
-3. **Sitter claims the account:** the sitter opens `/admin`, enters their email in the
-   same "Get set up" form, follows their emailed link, and sets a business name +
+3. **Sitter claims the account:** the sitter opens `/signup` (or `/admin` → "New here?
+   Sign up"), enters their email, follows their emailed link, and sets a business name +
    password. The tenant (slug derived from the business name) is provisioned atomically.
 4. **Onboarding wizard:** on first login the wizard walks them through profile, services,
    and pricing — after which their widget at `/embed/<slug>` is live.
