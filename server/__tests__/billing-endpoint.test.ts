@@ -393,6 +393,27 @@ describe('which event wins', () => {
     );
   });
 
+  it('ignores a same-second event that would lower the paid-through date', async () => {
+    // `created` has second resolution and Stripe documents it as unfit for ordering, so ties are
+    // broken by the one thing that is monotonic for a subscription: the date it is paid through.
+    const { env } = createTestEnv();
+    const later = daysFromNow(62);
+    await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'invoice.paid', billedUntil: later, eventId: 'evt_new' }),
+    );
+    const res = await post(
+      withSecrets(env),
+      'sunny-paws',
+      event({ eventType: 'customer.subscription.updated', eventId: 'evt_tied' }), // BILLED = +31d
+    );
+    expect(await res.json()).toEqual({ applied: false, reason: 'stale_event' });
+    expect((await getTenantById(env.PAWSERVATION_DB, TENANT_A))!.BilledUntil).toBe(
+      normalizeBilledUntil(later),
+    );
+  });
+
   it('ignores an event older than the last one applied', async () => {
     const { env } = createTestEnv();
     await post(withSecrets(env), 'sunny-paws', event({ eventCreated: T0 }));

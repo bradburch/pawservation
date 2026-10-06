@@ -372,7 +372,12 @@ names no path, and a route that wants out has to say so where its reviewer is. T
   dashboard goes quiet — but a request her clients keep submitting is one she must be able to
   answer, on dates she must be able to close, or the requests pile up unanswered against a calendar
   she cannot block. So the whole request loop keeps working; what she loses is everything else —
-  settings, services, rates, minting tokens, connecting a calendar, exports, imports;
+  settings, services, rates, minting tokens, connecting a calendar, exports, imports.
+  The answer may carry an optional `expected: { startDate, endDate | null, petCount, estCostCents | null }`
+  — what her card showed. It is enforced in the UPDATE's own `WHERE` (nullable columns with `IS ?`),
+  so a client's edit made after the card was drawn is refused `409 { code: 'booking_changed' }`
+  and nothing changes; without it the endpoint behaves as before, and a malformed one is a 400. The
+  capacity warning is a different 409 (`code: 'capacity_conflict'`, `requiresOverride: true`);
 - **revoking a credential** (`DELETE /:slug/admin/tokens/*`, by id or a token revoking itself) — a
   leaked `pawsa_` token on a lapsed business would otherwise be a leak she cannot stop; minting
   stays refused;
@@ -486,6 +491,12 @@ now is, and they differ from each other in two ways:
   checkout must not regress a row to the subscription a newer one replaced. `LastBillingEventAt`
   is therefore a **high-water mark**, never lowered, so an older resync applies its payload without
   re-opening the stale window to every ordinary webhook redelivered from between;
+- **a same-second tie is broken by the paid-through date.** The processor's `created` is whole
+  seconds and its documentation says not to order events by it. An event created in the same second
+  as the last one applied still lands, except that one for the CURRENT subscription whose
+  `billedUntil` is earlier than the stored date is declined `stale_event`, so arrival order inside a
+  second cannot lower what was paid for. No seen-set of event ids is kept: an older duplicate is
+  stale, and a tied one is identical or refused by that rule;
 - **a `resync` may replace the subscription only within the same customer.** One naming a
   different `stripeCustomerId` than the row holds is declined `not_current_subscription`: it is
   talking about somebody else's subscription, and the shared secret alone must not be enough to
@@ -680,4 +691,4 @@ code.
 
 ## License
 
-[MIT](./LICENSE) © 2026 Brad Burch
+© 2026 Brad Burch. All rights reserved.
