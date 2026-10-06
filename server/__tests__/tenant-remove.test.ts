@@ -12,6 +12,8 @@ const TENANT_TABLES = [
   'EndUsers',
   'LoginCodes',
   'BookingRequests',
+  'BookingSeries',
+  'BookingSeriesSkips',
   'EndUserPets',
   'PetOwners',
   'Payments',
@@ -52,6 +54,15 @@ function seedFullTenant(raw: DatabaseSync, t: string, slug: string) {
   raw.exec(
     `INSERT INTO BookingRequestPets (BookingRequestId, PetId) VALUES ('${t}_b','${t}_pet');`,
   );
+  // A series, one pet edge and one skip: BookingSeriesPets has no TenantId, so it is reached
+  // through its series.
+  raw.exec(
+    `INSERT INTO BookingSeries (Id, TenantId, EndUserId, ServiceType, Weekdays, StartDate, Status, CreatedBy, CreatedAt, UpdatedAt) VALUES ('${t}_s','${t}','${t}_eu','walk',2,'2030-01-01','active','client','x','x');`,
+  );
+  raw.exec(`INSERT INTO BookingSeriesPets (SeriesId, PetId) VALUES ('${t}_s','${t}_pet');`);
+  raw.exec(
+    `INSERT INTO BookingSeriesSkips (SeriesId, TenantId, Date, Reason, CreatedAt) VALUES ('${t}_s','${t}','2030-01-08','full','x');`,
+  );
   raw.exec(
     `INSERT INTO Payments (Id, TenantId, BookingRequestId, Amount, Method, PaidDate) VALUES ('${t}_p','${t}','${t}_b',5000,'cash','2026-07-21');`,
   );
@@ -90,6 +101,14 @@ describe('deleteTenantCompletely', () => {
           .get() as { n: number }
       ).n,
     ).toBe(0);
+    const seriesPets = (s: string) =>
+      (
+        raw.prepare('SELECT COUNT(*) AS n FROM BookingSeriesPets WHERE SeriesId = ?').get(s) as {
+          n: number;
+        }
+      ).n;
+    expect(seriesPets('t_gone_s')).toBe(0);
+    expect(seriesPets('t_keep_s')).toBe(1);
     expect(
       (
         raw.prepare("SELECT COUNT(*) AS n FROM AllowedSitters WHERE TenantId='t_gone'").get() as {

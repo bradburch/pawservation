@@ -430,6 +430,36 @@ describe('admin data export route', () => {
     expect(row![rows[0].indexOf('Pets')]).toBe('');
   });
 
+  it('names the series of a walk in a Series column, blank for a single booking', async () => {
+    const { env, raw } = createTestEnv();
+    raw
+      .prepare(
+        `INSERT INTO BookingSeries (Id, TenantId, EndUserId, ServiceType, Weekdays, StartDate, Status, CreatedBy, CreatedAt, UpdatedAt)
+         VALUES ('series_1', ?, 'eu_sp_jess', 'walk', 2, '2030-01-01', 'active', 'client', 'x', 'x')`,
+      )
+      .run(TENANT_A);
+    const walk = await insertBookingRequest(env.PAWSERVATION_DB, TENANT_A, {
+      endUserId: 'eu_sp_jess',
+      serviceType: 'walk',
+      startDate: '2030-01-08',
+      endDate: null,
+      optionKey: null,
+      petCount: 1,
+      estCost: 2500,
+      status: 'confirmed',
+      seriesId: 'series_1',
+      syncPending: 0,
+    });
+
+    const rows = await rowsOf(await get(env, 'bookings'));
+    const seriesIndex = rows[0].indexOf('Series');
+    // Beside the status it qualifies, not tacked on the end.
+    expect(seriesIndex).toBe(rows[0].indexOf('Status') + 1);
+    const byId = new Map(rows.slice(1).map((r) => [r[0], r]));
+    expect(byId.get(walk)![seriesIndex]).toBe('series_1');
+    expect(byId.get('seed_sp_board1')![seriesIndex]).toBe('');
+  });
+
   it('names the person behind a household payment, once, even when the pet is co-owned', async () => {
     const { env } = createTestEnv();
     // A second owner on Bella. A plain join through PetOwners would emit this payment once per
