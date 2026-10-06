@@ -453,6 +453,34 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
+      <!-- Who it is for, said once and plainly: one sitter or walker with a regular book of about
+           ten to twenty clients. Each card is something that sitter does today by text and what
+           changes, with no figure the product cannot back. A band, so the sections below keep
+           alternating. -->
+      <section class="section band" id="fit" aria-labelledby="fit-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Is this for you?</span>
+            <h2 id="fit-h">Made for a sitter with ten to twenty regular clients</h2>
+            <p>If you walk dogs or pet sit on your own, and most of your week is the same households asking the same questions, this is for you.</p>
+          </div>
+          <div class="features features-3">
+            <div class="feature">
+              <h3>&ldquo;Are you free the weekend of the 14th?&rdquo;</h3>
+              <p>Your clients see your open days for themselves, so the question never has to reach you.</p>
+            </div>
+            <div class="feature">
+              <h3>&ldquo;What would it be for both dogs?&rdquo;</h3>
+              <p>The price appears as they pick dates and pets, at the rates you set. A combination you haven&rsquo;t priced is never guessed at.</p>
+            </div>
+            <div class="feature">
+              <h3>&ldquo;Did I pay you for last week?&rdquo;</h3>
+              <p>Every household has one running balance, so you both see the same answer without scrolling back through texts.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Two first-class paths, not a website and a footnote: the booking page on her own site,
            and no website at all. The link is the /embed/:slug page itself, the one og-booking.png
            exists to unfurl when she texts it to a client. WhatsApp is the Pro half of the

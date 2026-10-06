@@ -434,4 +434,22 @@ describe('GET / — landing page', () => {
     expect(body).toContain('email you a sign-up link');
     expect(body).toContain('type="submit">Request a sign-up link</button>');
   });
+
+  it('says who it is for: one sitter with ten to twenty regular clients', async () => {
+    const body = await landingBody();
+    const fit = body.slice(body.indexOf('id="fit"'), body.indexOf('id="ways"'));
+    expect(body.indexOf('id="fit"')).toBeLessThan(body.indexOf('id="how"'));
+    expect(fit).toContain('ten to twenty regular clients');
+    expect(fit).toContain('on your own');
+    expect(fit.match(/<div class="feature">/g)?.length).toBe(3);
+    // A pricing example must never read as an estimate the product would make.
+    expect(fit).toContain('never guessed at');
+  });
+
+  it('describes the product as neither open source nor free, and cites no other business', async () => {
+    const body = (await landingBody()).toLowerCase();
+    for (const legacy of ['open source', 'open-source', 'free tier', 'free plan', 'free forever'])
+      expect(body, legacy).not.toContain(legacy);
+    expect(body).not.toContain('bradpaws');
+  });
 });

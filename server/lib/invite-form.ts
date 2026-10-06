@@ -56,7 +56,7 @@ export function renderInviteForm(values: InviteFormValues = {}): string {
               </div>
               <div class="invite-field">
                 <label for="inv-website">Website or social page</label>
-                <input id="inv-website" name="website" type="text" maxlength="200" required autocomplete="url" placeholder="bradpaws.com, or your Facebook or Instagram page" value="${esc(values.website)}" />
+                <input id="inv-website" name="website" type="text" maxlength="200" required autocomplete="url" placeholder="yourbusiness.com, or your Facebook or Instagram page" value="${esc(values.website)}" />
               </div>
               <div class="invite-field">
                 <label for="inv-city">City</label>
