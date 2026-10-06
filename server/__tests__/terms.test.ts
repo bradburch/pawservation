@@ -25,4 +25,18 @@ describe('GET /terms', () => {
     expect(body).toContain('California');
     expect(body).toContain('San Francisco');
   });
+
+  it('says how a sitter cancels, what happens at period end, and how changes are announced', async () => {
+    const { env } = createTestEnv();
+    const body = await (await app.request('/terms', {}, env)).text();
+    expect(body).toContain('<h2>Your subscription</h2>');
+    expect(body).toMatch(/<strong>Manage plan<\/strong> opens Stripe&rsquo;s billing page/);
+    expect(body).toMatch(/runs to the end of the period already paid for/);
+    expect(body).toMatch(/three-day grace period, the dashboard becomes read-only/);
+    expect(body).toMatch(/your booking page keeps taking requests/);
+    // No refund policy exists in the product or the PRD, so the page promises none.
+    expect(body).toMatch(/including a refund, contact us/);
+    expect(body).not.toMatch(/check back periodically/i);
+    expect(body).toMatch(/email you before any material change/);
+  });
 });

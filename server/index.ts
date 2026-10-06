@@ -15,6 +15,12 @@ import { PAGE_STYLE } from './lib/page-style';
 import { PRICING } from './lib/plan-pricing';
 import { premiumOrigin } from './lib/premium';
 import { resolveTenant } from './lib/tenant-resolve';
+import {
+  marketingHtml,
+  WEB_ANALYTICS_CONNECT_ORIGIN,
+  WEB_ANALYTICS_SCRIPT_ORIGIN,
+} from './lib/web-analytics';
+import { attributionFromRequest, attributionQuery } from './lib/attribution';
 import { accountsRoutes } from './routes/accounts';
 import { adminRoutes } from './routes/admin';
 import { adminAuthRoutes } from './routes/admin-auth';
@@ -90,7 +96,17 @@ app.use('*', async (c, next) => {
   const turnstile = c.req.path === '/signup' ? TURNSTILE_SCRIPT_ORIGIN : null;
   const frames = [turnstile, origin].filter(Boolean).join(' ');
   const frameSrc = frames ? `; frame-src 'self' ${frames}` : '';
-  const scriptSrc = turnstile ? `; script-src 'self' ${turnstile}` : '';
+  // A marketing page rendered WITH the Cloudflare Web Analytics beacon (`marketingHtml` set the
+  // flag) also admits the beacon's script host and its report host. Each joins the ONE list for
+  // its directive — beside Turnstile's script host on /signup, beside the premium origin in
+  // `connect-src` — because a browser honours the first of two same-named directives and silently
+  // ignores the second. Without the flag every policy is exactly what it was before analytics
+  // existed, which is what keeps the widget and the dashboard untouched.
+  const analytics = c.get('webAnalytics') === true;
+  const scripts = [turnstile, analytics ? WEB_ANALYTICS_SCRIPT_ORIGIN : null].filter(Boolean);
+  const scriptSrc = scripts.length > 0 ? `; script-src 'self' ${scripts.join(' ')}` : '';
+  const connects = [origin, analytics ? WEB_ANALYTICS_CONNECT_ORIGIN : null].filter(Boolean);
+  const connectSrc = connects.length > 0 ? `; connect-src 'self' ${connects.join(' ')}` : '';
   if (c.req.path.startsWith('/embed')) {
     c.header('Content-Security-Policy', `${EMBEDDABLE_CSP}${frameSrc}`);
   } else {
@@ -101,7 +117,7 @@ app.use('*', async (c, next) => {
     // — on any deployment whose paid surface is on a different host. The commercial deployment
     // happens to publish the dashboard's own origin, which is the only reason nothing noticed.
     // The widget gets no `connect-src`: nothing in it fetches that origin.
-    const csp = `${LOCKED_CSP}${scriptSrc}${frameSrc}${origin ? `; connect-src 'self' ${origin}` : ''}`;
+    const csp = `${LOCKED_CSP}${scriptSrc}${frameSrc}${connectSrc}`;
     c.header('Content-Security-Policy', csp);
     c.header('X-Frame-Options', 'DENY');
   }
@@ -354,9 +370,11 @@ function pageHead(path: string, title: string, description: string): string {
 
 /**
  * Root landing page: a marketing page for prospective pet sitters, built around real
- * screenshots of the seeded demo (public/img/landing/*.webp). Static and script-free (served
- * under LOCKED_CSP, so only inline styles and same-origin images are allowed — NO <script>,
- * no external fonts/CSS/images), so it needs no build step. There is no interactivity at all.
+ * screenshots of the seeded demo (public/img/landing/*.webp). Script-free (served under
+ * LOCKED_CSP, so only inline styles and same-origin images are allowed — NO <script>, no external
+ * fonts/CSS/images) apart from the analytics beacon `marketingHtml` may append, so it needs no
+ * build step. There is no interactivity at all. Its "Sign up" links are rewritten per request (the
+ * route below) to carry the visitor's already-cleaned attribution to /signup.
  * The embed snippet below is shown as escaped text (&lt;script&gt;…) so the served body
  * genuinely contains no <script tag. Screenshot regeneration recipe (fixed 2028 seed months):
  * docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md.
@@ -1209,10 +1227,13 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
 `;
 
 /**
- * The Privacy Policy at /privacy — same LOCKED_CSP, script-free, PAGE_STYLE-only constraints as
+ * The Privacy Policy at /privacy — same LOCKED_CSP, PAGE_STYLE-only constraints (script-free bar the analytics beacon) as
  * every other static page here. Content is grounded in what this codebase actually does (see the
  * design doc's audit); this is not a substitute for legal review before it is a real business's
- * live policy.
+ * live policy. "Who we share it with" names every processor the code calls, premium's included
+ * (Stripe, Anthropic, Meta), and "What we measure" names, page by page, where `marketingHtml` may
+ * add the analytics beacon (`server/lib/web-analytics.ts`) and where Turnstile runs; either list
+ * changes in the same commit as the code it describes.
  */
 const PRIVACY_HTML = `<!doctype html>
 <html lang="en">
@@ -1246,7 +1267,7 @@ const PRIVACY_HTML = `<!doctype html>
           <p class="chip">Legal</p>
           <h1>Privacy Policy</h1>
           <p class="sub">What we collect, who we share it with, and how long we keep it, written to match what the product does.</p>
-          <p class="note">Last updated: August 4, 2026</p>
+          <p class="note">Last updated: October 5, 2026</p>
         </div>
       </section>
 
@@ -1254,11 +1275,17 @@ const PRIVACY_HTML = `<!doctype html>
         <div class="wrap legal">
           <div class="feature">
             <h2>What we collect</h2>
-            <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect or store card numbers, on either plan.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, check). On Pro, a card is entered on a page hosted by Stripe, which holds the card details under the sitter&rsquo;s own Stripe account; Pawservation stores only that a payment happened and its amount.</p>
+            <p>From customers: their name, email, phone, their pets&rsquo; names and any care notes they give their sitter, and the answers they give to their sitter&rsquo;s own booking questions. From sitters: your login email and a securely hashed password; we never store your password itself. <strong>We never collect or store card numbers, on either plan.</strong> Payments you log are just a record of money you already collected outside Pawservation (cash, Venmo, Zelle, PayPal, check or card). On Pro, a card is entered on a page hosted by Stripe, which holds the card details under the sitter&rsquo;s own Stripe account; Pawservation stores only that a payment happened and its amount.</p>
           </div>
           <div class="feature">
             <h2>Who we share it with</h2>
-            <p><strong>Resend</strong> sends our transactional email (login codes, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing. <strong>Google</strong> only sees your booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, cost, and your client&rsquo;s email address. <strong>Cloudflare</strong> is our hosting and database provider: everything above lives on Cloudflare&rsquo;s infrastructure.</p>
+            <p>These are every company that handles data for Pawservation, and what each one sees.</p>
+            <p><strong>Cloudflare</strong> hosts the product and its database: everything above lives on Cloudflare&rsquo;s infrastructure. Cloudflare also runs two small scripts on our own pages, described under &ldquo;What we measure&rdquo; below: Web Analytics on the public marketing pages, and Turnstile on the sign-up page, which checks that the person signing up is a person and not a bot.</p>
+            <p><strong>Resend</strong> sends our email (login codes, sign-up links, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing.</p>
+            <p><strong>Google</strong> only sees booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, cost, and the client&rsquo;s email address.</p>
+            <p><strong>Stripe</strong> processes a sitter&rsquo;s Pawservation subscription; the card for it is entered on Stripe&rsquo;s own page, and we never see the card number. On Pro, a client&rsquo;s card payment is also processed by Stripe, under the sitter&rsquo;s own Stripe account.</p>
+            <p><strong>Anthropic</strong> provides the AI model behind Pro&rsquo;s booking chat, booking by message, and the sitter&rsquo;s assistant. When someone uses one of those, what they type and the booking details needed to answer them (dates, pets, prices) are sent to Anthropic&rsquo;s model to write the reply. A client who connects their own AI assistant uses that assistant&rsquo;s model, not ours.</p>
+            <p><strong>Meta</strong> carries WhatsApp messages, only if a sitter on Pro connects WhatsApp: a client&rsquo;s messages to that sitter and the replies pass through Meta&rsquo;s WhatsApp service.</p>
           </div>
           <div class="feature">
             <h2>Cookies</h2>
@@ -1273,8 +1300,10 @@ const PRIVACY_HTML = `<!doctype html>
             <p>Pawservation is not directed at children, and we don&rsquo;t knowingly collect data from them.</p>
           </div>
           <div class="feature">
-            <h2>No tracking</h2>
-            <p>We run no analytics, no ad pixels, and no fingerprinting, on this page or anywhere else in the product. Our security policy blocks third-party scripts from loading at all.</p>
+            <h2>What we measure</h2>
+            <p>Our public marketing pages (the homepage, the tour, About, Contact, this policy, the Terms, the sign-up page and the page you see after signing up) use <strong>Cloudflare Web Analytics</strong> to count page views: which page was viewed, the site that linked to it, and the browser, device type and country. It sets no cookies, stores nothing on your device, and does not fingerprint you, so it cannot follow you from one visit or one site to the next. <strong>It is never on a sitter&rsquo;s booking page, the booking widget, the dashboard, or any page you sign in to</strong>, and we run no ad pixels anywhere.</p>
+            <p>The only third-party scripts our security policy lets any of our pages load are that analytics script on the marketing pages and Cloudflare Turnstile on the sign-up page. Everything else on every page, including the booking widget and the dashboard, is served by Pawservation itself.</p>
+            <p>When a sitter signs up, we also record where the sign-up came from: the campaign tag on the link they followed, if it had one, and the address of the site that linked to us (only the site, such as reddit.com, never the page). That goes only into the email we receive about the new sign-up.</p>
           </div>
           <div class="feature">
             <h2>Where your data lives</h2>
@@ -1294,7 +1323,7 @@ const PRIVACY_HTML = `<!doctype html>
 `;
 
 /**
- * The Terms & Conditions at /terms — same LOCKED_CSP, script-free, PAGE_STYLE-only constraints as
+ * The Terms & Conditions at /terms — same LOCKED_CSP, PAGE_STYLE-only constraints (script-free bar the analytics beacon) as
  * every other static page here. Not a substitute for legal review before it is a real business's
  * live terms.
  */
@@ -1330,7 +1359,7 @@ const TERMS_HTML = `<!doctype html>
           <p class="chip">Legal</p>
           <h1>Terms &amp; Conditions</h1>
           <p class="sub">The terms that govern using Pawservation.</p>
-          <p class="note">Last updated: August 4, 2026</p>
+          <p class="note">Last updated: October 5, 2026</p>
         </div>
       </section>
 
@@ -1361,6 +1390,10 @@ const TERMS_HTML = `<!doctype html>
             <p>Pawservation is provided &ldquo;as is,&rdquo; without any uptime guarantee. To the fullest extent the law allows, Pawservation is not liable for indirect, incidental, or consequential damages arising from use of the service.</p>
           </div>
           <div class="feature">
+            <h2>Your subscription</h2>
+            <p>A sitter can cancel at any time from the dashboard: <strong>Manage plan</strong> opens Stripe&rsquo;s billing page, where the subscription can be cancelled, and the card or plan changed. A cancelled subscription runs to the end of the period already paid for and is not renewed. After that, and a three-day grace period, the dashboard becomes read-only: you can still answer booking requests, block dates and record payments, your booking page keeps taking requests, and anything that needs a current plan, such as changing services or rates or syncing Google Calendar, waits until you subscribe again. For a question about a charge, including a refund, contact us at <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>.</p>
+          </div>
+          <div class="feature">
             <h2>Termination</h2>
             <p>The platform owner may disable or remove an account that violates these terms.</p>
           </div>
@@ -1370,7 +1403,7 @@ const TERMS_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>Changes</h2>
-            <p>We may update these terms from time to time; check back periodically.</p>
+            <p>We may update these terms from time to time. We&rsquo;ll email you before any material change takes effect.</p>
           </div>
         </div>
       </section>
@@ -1591,17 +1624,24 @@ app.get('/', (c) => {
       'Content-Type': 'text/markdown; charset=utf-8',
     });
   }
-  return c.html(LANDING_HTML);
+  // Per request, for the "Sign up" links only: they carry the outreach link's UTM tags and the
+  // ORIGIN of the site that linked here (`server/lib/attribution.ts`) on to /signup, because the
+  // Referer /signup itself sees is this page. No attribution, no rewrite: the page is unchanged.
+  const query = attributionQuery(attributionFromRequest(c));
+  const html = query
+    ? LANDING_HTML.replaceAll('href="/signup"', `href="/signup${query}"`)
+    : LANDING_HTML;
+  return marketingHtml(c, html);
 });
 // Listed in wrangler.jsonc's run_worker_first as the BARE path "/how-it-works" — a glob does not
 // match it. Today nothing is emitted at that path, so it would reach the worker regardless (as
 // "/" does, which is not listed); the entry is defensive, so that if a build ever emits an asset
 // there it can never shadow this route.
-app.get('/how-it-works', (c) => c.html(HOW_IT_WORKS_HTML));
-app.get('/about', (c) => c.html(ABOUT_HTML));
-app.get('/contact', (c) => c.html(CONTACT_HTML));
-app.get('/privacy', (c) => c.html(PRIVACY_HTML));
-app.get('/terms', (c) => c.html(TERMS_HTML));
+app.get('/how-it-works', (c) => marketingHtml(c, HOW_IT_WORKS_HTML));
+app.get('/about', (c) => marketingHtml(c, ABOUT_HTML));
+app.get('/contact', (c) => marketingHtml(c, CONTACT_HTML));
+app.get('/privacy', (c) => marketingHtml(c, PRIVACY_HTML));
+app.get('/terms', (c) => marketingHtml(c, TERMS_HTML));
 
 // Uniform JSON 500 so an unhandled throw (e.g. a route that rethrows after cleanup) doesn't fall
 // through to Hono's plain-text default and break the { error } contract every client parses.

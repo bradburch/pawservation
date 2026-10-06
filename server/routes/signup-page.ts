@@ -10,11 +10,13 @@ import { htmlEscape, isEmailConfigured, sendSignupLink, sendSignupNotice } from 
 import { isOwnerEmail } from '../lib/owners';
 import { PAGE_STYLE } from '../lib/page-style';
 import { PRICING } from '../lib/plan-pricing';
+import { attributionFromForm, attributionFromRequest, type Attribution } from '../lib/attribution';
 import { checkAndBumpRateLimit } from '../lib/rate-limit';
 import { mintLink, SIGNUP_LINK_TTL_SECONDS } from '../lib/signup-link';
 import { renderSignupForm, TURNSTILE_SCRIPT_TAG } from '../lib/signup-form';
 import { turnstileState, verifyTurnstile } from '../lib/turnstile';
 import { EMAIL_RE } from '../lib/validation';
+import { marketingHtml } from '../lib/web-analytics';
 import type { AppEnv } from '../types';
 
 /**
@@ -116,7 +118,10 @@ function shell(title: string, body: string, opts: { turnstile?: boolean } = {}):
 </html>`;
 }
 
-function renderSignupPage(env: Env, opts: { email?: string; error?: string } = {}): string {
+function renderSignupPage(
+  env: Env,
+  opts: { email?: string; error?: string; attribution?: Attribution } = {},
+): string {
   const siteKey = turnstileState(env) === 'on' ? env.TURNSTILE_SITE_KEY : undefined;
   const review = signupMode(env) === 'review';
   // Review mode promises no speed: a person reads each request (README, "Provisioning").
@@ -133,6 +138,7 @@ function renderSignupPage(env: Env, opts: { email?: string; error?: string } = {
         ${renderSignupForm({
           email: opts.email,
           siteKey,
+          attribution: opts.attribution,
           submitLabel: review ? 'Ask for an account' : 'Start my free trial',
         })}`,
     { turnstile: Boolean(siteKey) },
@@ -187,8 +193,15 @@ export const signupPageRoutes = new Hono<AppEnv>()
   // gone on purpose — nothing renders a form that targets it any more.
   .get('/request-invite', (c) => c.redirect('/signup', 301))
   .get('/request-invite/thanks', (c) => c.redirect('/signup', 301))
-  .get('/signup', (c) => c.html(renderSignupPage(c.env)))
-  .get('/signup/sent', (c) => c.html(renderSentPage(signupMode(c.env))))
+  // The two GETs are marketing pages: they carry the analytics beacon when one is configured
+  // (`server/lib/web-analytics.ts`), and a view of /signup/sent is the conversion the landing
+  // page's views are counted against. POST responses never carry it — they echo a typed email.
+  // /signup is also where a visitor from an outreach link may ARRIVE, so it reads attribution
+  // the way the landing page does (`server/lib/attribution.ts`).
+  .get('/signup', (c) =>
+    marketingHtml(c, renderSignupPage(c.env, { attribution: attributionFromRequest(c) })),
+  )
+  .get('/signup/sent', (c) => marketingHtml(c, renderSentPage(signupMode(c.env))))
   .post('/signup', async (c) => {
     let raw: Record<string, unknown>;
     try {
@@ -198,11 +211,17 @@ export const signupPageRoutes = new Hono<AppEnv>()
       return c.html(renderSignupPage(c.env, { error: INVALID_EMAIL }), 400);
     }
     if (isHoneypotFilled(raw.fax)) return c.redirect(SENT_PATH, 303);
+    // Cleaned again here: hidden fields are visitor-writable. Malformed values are DROPPED, never
+    // a reason to refuse the sign-up, and they ride along on every re-render below.
+    const attribution = attributionFromForm(raw, new URL(c.req.url).origin);
 
     const parsed = v.safeParse(Email, raw.email);
     if (!parsed.success) {
       const echo = typeof raw.email === 'string' ? raw.email : undefined;
-      return c.html(renderSignupPage(c.env, { email: echo, error: INVALID_EMAIL }), 400);
+      return c.html(
+        renderSignupPage(c.env, { email: echo, error: INVALID_EMAIL, attribution }),
+        400,
+      );
     }
     const email = parsed.output;
 
@@ -218,12 +237,19 @@ export const signupPageRoutes = new Hono<AppEnv>()
     if (state === 'on') {
       const token = raw['cf-turnstile-response'];
       // No token at all is the landing page's first step, not a failure: show the challenge.
-      if (token === undefined || token === '') return c.html(renderSignupPage(c.env, { email }));
+      if (token === undefined || token === '') {
+        return c.html(renderSignupPage(c.env, { email, attribution }));
+      }
       const ok = await verifyTurnstile(c.env, typeof token === 'string' ? token : '', {
         remoteIp: ip,
         hostname: new URL(c.req.url).hostname,
       });
-      if (!ok) return c.html(renderSignupPage(c.env, { email, error: CHALLENGE_FAILED }), 400);
+      if (!ok) {
+        return c.html(
+          renderSignupPage(c.env, { email, error: CHALLENGE_FAILED, attribution }),
+          400,
+        );
+      }
     }
 
     const cache = c.env.PAWSERVATION_CACHE;
@@ -256,7 +282,7 @@ export const signupPageRoutes = new Hono<AppEnv>()
         );
       }
       if (p.notice) {
-        await sendSignupNotice(c.env, { email, mode: p.notice }).catch((err) =>
+        await sendSignupNotice(c.env, { email, mode: p.notice, attribution }).catch((err) =>
           console.error('signup owner notice failed', err),
         );
       }

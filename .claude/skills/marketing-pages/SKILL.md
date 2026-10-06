@@ -38,6 +38,24 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   adds both for that exact path and nowhere else; every "Sign up" on the marketing pages is a
   plain link to `/signup` (no form on `/`, which made the sitter submit twice). `/request-invite` and its thanks page
   are retired and 301 to `/signup`.
+- **The other third-party script is the Cloudflare Web Analytics beacon (owner decision
+  2026-10-05).** When `CF_WEB_ANALYTICS_TOKEN` is set (32 hex), `marketingHtml`
+  (`server/lib/web-analytics.ts`) appends the cookieless beacon before `</body>` on the six pages
+  above and on the GETs of `/signup` and `/signup/sent`, and sets the `webAnalytics` context flag
+  the header middleware reads to add `https://static.cloudflareinsights.com` to the ONE `script-src`
+  list (beside Turnstile's on `/signup`) and `https://cloudflareinsights.com` to the ONE
+  `connect-src` list (beside the premium origin). Tag and allowance are one decision, so neither
+  ships alone. Unset, the pages are byte-identical to before. Never on `/embed/*`, the dashboard,
+  `/demo`, `/setup` or any POST response; `web-analytics.test.ts` pins those as unchanged. A page
+  added here must be served through `marketingHtml` to be counted, and the privacy page's "What we
+  measure" section lists the pages by name, so it changes in the same commit.
+- **A sign-up carries where it came from.** `GET /` reads `utm_source`, `utm_campaign` and the
+  Referer's ORIGIN (`server/lib/attribution.ts`) and appends them to its `href="/signup"` links
+  (the referrer as `ref_origin`); `GET /signup` reads the same from its query, or from its own
+  Referer on a direct arrival, into hidden fields on the form; every `POST /signup` re-render keeps
+  them, cleaned again at each hop, and the owner's `sendSignupNotice` states them. Malformed values
+  are dropped, never a 400; never logged, never stored. The other pages' Sign up links do not carry
+  them.
 
 ## `pageHead` and the canonical
 

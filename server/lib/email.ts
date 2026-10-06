@@ -10,6 +10,7 @@
  * and the caller falls back to returning the code/link on screen (see routes/auth.ts).
  */
 
+import type { Attribution } from './attribution';
 import { parseOwnerEmails } from './owners';
 import { formatCents } from '../../src/shared/index.js';
 
@@ -409,13 +410,14 @@ function clean(value: string): string {
  * in open mode, a to-do in review mode. Recipients are every address in `OWNER_EMAILS` (one send,
  * multiple `to`); sender is RESEND_FROM_NOREPLY; `reply_to` is the sitter's own address, so the
  * owner can answer her directly. Only a Turnstile-verified, rate-limited submission reaches this,
- * and the email is the only submitter-controlled value: control characters stripped for the
- * subject, escaped for the HTML. Throws if email or owners are unconfigured, or Resend refuses —
+ * and its submitter-controlled values are the email and the already-cleaned attribution (where the
+ * visitor came from): control characters stripped, escaped for the HTML, attribution never in the
+ * subject. Throws if email or owners are unconfigured, or Resend refuses —
  * the caller logs and swallows, since the sitter has already been answered.
  */
 export async function sendSignupNotice(
   env: Env,
-  notice: { email: string; mode: 'open' | 'review' },
+  notice: { email: string; mode: 'open' | 'review'; attribution?: Attribution },
 ): Promise<void> {
   if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
   const owners = parseOwnerEmails(env);
@@ -431,6 +433,20 @@ export async function sendSignupNotice(
           `${email} asked for a sign-up link. Sign-ups are in review mode, so nothing was sent.`,
           'To let them in, add this address to the allowlist in the owner console.',
         ];
+  // Which outreach produced this sign-up (`server/lib/attribution.ts`, already cleaned there;
+  // `clean` again only because every value in this mail goes through it). Stated as "none
+  // recorded" rather than omitted, so a missing line is never mistaken for a form that lost it.
+  const a = notice.attribution ?? {};
+  const source = [
+    a.utmSource ? `Source (utm_source): ${clean(a.utmSource)}` : null,
+    a.utmCampaign ? `Campaign (utm_campaign): ${clean(a.utmCampaign)}` : null,
+    a.refOrigin ? `Referred from: ${clean(a.refOrigin)}` : null,
+  ].filter((line): line is string => line !== null);
+  lines.push(
+    ...(source.length > 0
+      ? source
+      : ['Source: none recorded (a direct visit or an untagged link)']),
+  );
   await resendPost(env, env.RESEND_FROM_NOREPLY!, {
     to: owners,
     reply_to: email,
