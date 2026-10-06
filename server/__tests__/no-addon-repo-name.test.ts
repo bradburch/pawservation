@@ -45,6 +45,6 @@ describe('no tracked file names the add-on repository', () => {
     expect(tracked).toContain('server/index.ts');
     expect(tracked).toContain('README.md');
     expect(NAME.test(['pawservation', 'premium'].join('-'))).toBe(true);
-    expect(NAME.test('Pawservation_Premium')).toBe(true);
+    expect(NAME.test(['Pawservation', 'Premium'].join('_'))).toBe(true);
   });
 });
