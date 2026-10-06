@@ -24,6 +24,7 @@ import {
   getEndUserByEmail,
   getHouseholdDetail,
   getHouseholdsWithUnappliedCredits,
+  armSeriesSync,
   cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
@@ -2899,7 +2900,10 @@ export const adminRoutes = new Hono<AppEnv>()
     // in tests, which have no ExecutionContext — see routes/bookings.ts).
     let calendarTask: Promise<void> | null = null;
     const retitle = keepsCalendarEventOnCancel('cancelled', fee ?? null) && status === 'cancelled';
-    if (status === 'confirmed' || retitle) {
+    if (booking?.SeriesId) {
+      // A series walk has no event of its own: mark its series, and let the series' mirror move.
+      await armSeriesSync(c.env.PAWSERVATION_DB, tenant.Id, booking.SeriesId);
+    } else if (status === 'confirmed' || retitle) {
       // Confirm: retitle the existing event (drop the [REQUEST] marker), or — if the booking has
       // NO event yet (booked before the calendar was connected, or a Google outage swallowed the
       // request-time create) — create it now as a catch-up, already in the confirmed state.

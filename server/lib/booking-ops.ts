@@ -37,6 +37,7 @@
  */
 import {
   addBookingPets,
+  armSeriesSync,
   cancelBookingForUser,
   deleteBookingRequest,
   findBookingByIdempotencyKey,
@@ -1089,7 +1090,10 @@ export async function cancelBooking(
 
   // Best-effort calendar mirror — never blocks or fails the cancellation. SyncPending is already
   // set by the UPDATE above, so a Google failure just leaves the push for the next cron sweep.
-  if (booking.GCalEventId) {
+  if (booking.SeriesId) {
+    // A series walk has no event of its own: mark its series instead.
+    await armSeriesSync(env.PAWSERVATION_DB, tenant.Id, booking.SeriesId);
+  } else if (booking.GCalEventId) {
     const eventId = booking.GCalEventId;
     await background(
       ctx,
@@ -1456,6 +1460,11 @@ export async function editBooking(
   // before the sitter connected Google — gets one created, which is what `syncBookingToCalendar`
   // does and what the outbox would do on the next sweep anyway. `SyncPending` is already set by
   // the UPDATE above, so a Google failure only delays the mirror.
+  if (booking.SeriesId) {
+    // A series walk has no event of its own: mark its series instead.
+    await armSeriesSync(env.PAWSERVATION_DB, tenant.Id, booking.SeriesId);
+    return ok({ id, estCostCents, status: 'pending' as const });
+  }
   await background(
     ctx,
     (async () => {
