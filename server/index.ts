@@ -27,6 +27,7 @@ import { adminAuthRoutes } from './routes/admin-auth';
 import { authRoutes } from './routes/auth';
 import { billingRoutes } from './routes/billing';
 import { bookingRoutes } from './routes/bookings';
+import { seriesRoutes } from './routes/series';
 import { oauthRoutes } from './routes/oauth';
 import { ownerRoutes } from './routes/owner';
 import { passwordResetRoutes } from './routes/password-reset';
@@ -131,6 +132,7 @@ app.route('/api', adminAuthRoutes); // /api/admin/login, /api/admin/session (no 
 app.route('/api', publicRoutes);
 app.route('/api', authRoutes);
 app.route('/api', bookingRoutes);
+app.route('/api', seriesRoutes); // /api/:slug/series — a client's repeating bookings
 app.route('/api', tokenRoutes); // /api/:slug/tokens — the customer's own API credentials
 // BEFORE adminRoutes, and that is not cosmetic. `adminRoutes` does .use('/:slug/admin/*', adminAuth)
 // and Hono FLATTENS .use() patterns across every app mounted at the same base, so

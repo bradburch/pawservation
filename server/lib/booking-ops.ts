@@ -133,7 +133,7 @@ const fail = (status: OpStatus, error: string, code?: string): OpFailure =>
  * customer to ask for a rate that already exists, and would tell an agent reading `code` that the
  * sitter needs to add a price when what she needs is to fix one.
  */
-const unpricedRefusal = (
+export const unpricedRefusal = (
   reason: 'unpriced-pet-set' | 'cost-out-of-range',
   sitterName: string,
 ): OpFailure =>

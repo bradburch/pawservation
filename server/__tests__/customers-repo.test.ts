@@ -135,11 +135,17 @@ describe('customer repo', () => {
     expect(await countBookingsForUser(env.PAWSERVATION_DB, TENANT_A, c.Id)).toBe(1);
   });
 
-  const seedSeries = (raw: DatabaseSync, id: string, endUserId: string, petId?: string) => {
+  const seedSeries = (
+    raw: DatabaseSync,
+    id: string,
+    endUserId: string,
+    petId?: string,
+    tenantId = TENANT_A,
+  ) => {
     raw.exec(`INSERT INTO BookingSeries (Id, TenantId, EndUserId, ServiceType, Weekdays, StartDate, Status, CreatedBy, CreatedAt, UpdatedAt)
-              VALUES ('${id}','${TENANT_A}','${endUserId}','walk',2,'2030-01-01','pending_client','sitter','x','x')`);
+              VALUES ('${id}','${tenantId}','${endUserId}','walk',2,'2030-01-01','pending_client','sitter','x','x')`);
     raw.exec(`INSERT INTO BookingSeriesSkips (SeriesId, TenantId, Date, Reason, CreatedAt)
-              VALUES ('${id}','${TENANT_A}','2030-01-08','full','x')`);
+              VALUES ('${id}','${tenantId}','2030-01-08','full','x')`);
     if (petId)
       raw.exec(`INSERT INTO BookingSeriesPets (SeriesId, PetId) VALUES ('${id}','${petId}')`);
   };
@@ -233,6 +239,60 @@ describe('customer repo', () => {
     seedSeries(raw, 'ser_own', owner.Id, pet.Id);
     expect(await deleteCustomer(env.PAWSERVATION_DB, TENANT_A, owner.Id)).toBe('deleted');
     expect(countRows(raw, 'EndUserPets', `Id = '${pet.Id}'`)).toBe(0);
+  });
+
+  // The three-identity rule for the series statements: the same email under another sitter is an
+  // unrelated client, and deleting one never touches the other's series — in either direction.
+  it("deleteCustomer never takes another tenant's same-email client's series", async () => {
+    const { env, raw } = createTestEnv();
+    const a = await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_A, 'twin@example.com', null);
+    const b = await insertInvitedCustomer(env.PAWSERVATION_DB, TENANT_B, 'twin@example.com', null);
+    const petA = await addEndUserPet(env.PAWSERVATION_DB, TENANT_A, a.Id, 'Twin A', 'dog');
+    const petB = await addEndUserPet(env.PAWSERVATION_DB, TENANT_B, b.Id, 'Twin B', 'dog');
+    seedSeries(raw, 'ser_twin_a', a.Id, petA.Id);
+    seedSeries(raw, 'ser_twin_b', b.Id, petB.Id, TENANT_B);
+
+    // The wrong tenant's call on A's id is not-found, and writes nothing anywhere.
+    expect(await deleteCustomer(env.PAWSERVATION_DB, TENANT_B, a.Id)).toBe('not-found');
+    for (const id of ['ser_twin_a', 'ser_twin_b']) {
+      expect(countRows(raw, 'BookingSeries', `Id = '${id}'`)).toBe(1);
+      expect(countRows(raw, 'BookingSeriesPets', `SeriesId = '${id}'`)).toBe(1);
+      expect(countRows(raw, 'BookingSeriesSkips', `SeriesId = '${id}'`)).toBe(1);
+    }
+
+    // Deleting A takes A's series and leaves B's whole.
+    expect(await deleteCustomer(env.PAWSERVATION_DB, TENANT_A, a.Id)).toBe('deleted');
+    expect(countRows(raw, 'BookingSeries', `Id = 'ser_twin_a'`)).toBe(0);
+    expect(countRows(raw, 'BookingSeries', `Id = 'ser_twin_b'`)).toBe(1);
+    expect(countRows(raw, 'BookingSeriesPets', `SeriesId = 'ser_twin_b'`)).toBe(1);
+    expect(countRows(raw, 'BookingSeriesSkips', `SeriesId = 'ser_twin_b'`)).toBe(1);
+    expect(countRows(raw, 'EndUsers', `Id = '${b.Id}'`)).toBe(1);
+  });
+
+  it("deleteCustomer refuses, writing nothing, when the client's own rowless series names a pet a co-owner's series also names", async () => {
+    const { env, raw } = createTestEnv();
+    const owner = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'bothseries@example.com',
+      null,
+    );
+    const other = await insertInvitedCustomer(
+      env.PAWSERVATION_DB,
+      TENANT_A,
+      'bothseries-other@example.com',
+      null,
+    );
+    const pet = await addEndUserPet(env.PAWSERVATION_DB, TENANT_A, owner.Id, 'Both', 'dog');
+    seedSeries(raw, 'ser_mine', owner.Id, pet.Id);
+    seedSeries(raw, 'ser_theirs', other.Id, pet.Id);
+    expect(await deleteCustomer(env.PAWSERVATION_DB, TENANT_A, owner.Id)).toBe('pet-on-booking');
+    for (const id of ['ser_mine', 'ser_theirs']) {
+      expect(countRows(raw, 'BookingSeries', `Id = '${id}'`)).toBe(1);
+      expect(countRows(raw, 'BookingSeriesPets', `SeriesId = '${id}'`)).toBe(1);
+      expect(countRows(raw, 'BookingSeriesSkips', `SeriesId = '${id}'`)).toBe(1);
+    }
+    expect(countRows(raw, 'EndUserPets', `Id = '${pet.Id}'`)).toBe(1);
   });
 
   it('deleteCustomer takes the customer’s personal access tokens with them', async () => {

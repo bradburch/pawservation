@@ -63,7 +63,7 @@ export type ProjectedWalk = {
  * Callers turn it into a skip of every date as `unavailable` (the cron) or a 409 (routes).
  */
 export class SeriesTermsGone extends Error {
-  constructor(what: 'service' | 'option' | 'pet') {
+  constructor(readonly what: 'service' | 'option' | 'pet') {
     super(`series terms gone: ${what}`);
     this.name = 'SeriesTermsGone';
   }

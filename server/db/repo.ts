@@ -1608,6 +1608,28 @@ export async function listSeriesBookingDates(
   return new Map(results.map((r) => [r.StartDate, r.Id]));
 }
 
+/**
+ * The display names of a series' pets, deceased ones included: a series names the pets it was
+ * agreed for, and a name read through the living-pets view would silently drop one from the list.
+ */
+export async function listSeriesPetNames(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<{ PetId: string; Name: string }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT p.Id AS PetId, p.Name FROM BookingSeriesPets bsp
+         JOIN BookingSeries s ON s.Id = bsp.SeriesId
+         JOIN EndUserPets p ON p.Id = bsp.PetId AND p.TenantId = s.TenantId
+        WHERE s.TenantId = ? AND bsp.SeriesId = ?
+        ORDER BY bsp.PetId`,
+    )
+    .bind(tenantId, seriesId)
+    .all<{ PetId: string; Name: string }>();
+  return results;
+}
+
 export async function findSeriesByIdempotencyKey(
   db: D1Database,
   tenantId: string,

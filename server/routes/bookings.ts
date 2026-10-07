@@ -32,7 +32,7 @@ import type { AppEnv } from '../types';
  * email) is handed to the platform; in tests there is no ExecutionContext, so the promise is
  * returned and the operation awaits it, which is what makes those paths deterministic.
  */
-function opsContext(c: Context<AppEnv>): BookingOpsContext {
+export function opsContext(c: Context<AppEnv>): BookingOpsContext {
   return {
     env: c.env,
     tenant: c.get('tenant'),
@@ -52,7 +52,7 @@ function opsContext(c: Context<AppEnv>): BookingOpsContext {
  * refusal that never carried a code (every quote 400) stays `{ error }` on the wire exactly as it
  * always has.
  */
-function respond<T>(c: Context<AppEnv>, result: OpResult<T>) {
+export function respond<T>(c: Context<AppEnv>, result: OpResult<T>): Response {
   if (result.ok) return c.json(result.data, result.status);
   return c.json(
     result.code === undefined
