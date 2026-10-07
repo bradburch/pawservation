@@ -22,6 +22,7 @@ import {
   findSeriesByIdempotencyKey,
   getEndUserById,
   getSeries,
+  getSitterNotificationEmail,
   insertSeriesPetStatements,
   insertSeriesStatement,
   listEndUserPets,
@@ -494,12 +495,13 @@ export async function requestSeries(
   ).catch((err) => {
     console.error('saving intake answers failed', err);
   });
-  // Tell the sitter, at her contact address — best-effort, as the single booking's notices are:
-  // the series is written and the client is about to be told so. No address set → no email.
+  // Tell the sitter — at the address the cancellation notice uses (her contact address, else her
+  // first login's), best-effort: the series is written and the client is about to be told so.
   // Never reached by the demo arm or a replay, which both return above.
   const notify = (async () => {
-    const to = tenant.ContactEmail?.trim();
-    if (!isEmailConfigured(env) || !to) return;
+    if (!isEmailConfigured(env)) return;
+    const to = await getSitterNotificationEmail(db, tenant.Id);
+    if (!to) return;
     await sendSeriesRequestToSitter(env, to, {
       displayName: tenant.DisplayName,
       customerName: requester.Name ?? null,

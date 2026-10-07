@@ -818,8 +818,15 @@ describe('the sitter is told of a series request', () => {
     expect(mail[0].html).not.toContain('$');
   });
 
-  it('request: no contact address → no email', async () => {
+  it("request: no contact address → her first login's address, as the cancellation notice does", async () => {
     const { env, token, sent } = await mailWorld(null);
+    expect((await post(env, token, '/series', body())).status).toBe(201);
+    expect(sent().map((m) => m.to)).toEqual(['admin@sunnypaws.example']);
+  });
+
+  it('request: no contact address and no login → no email', async () => {
+    const { env, raw, token, sent } = await mailWorld(null);
+    raw.prepare(`DELETE FROM TenantUsers WHERE TenantId = ?`).run(TENANT_A);
     expect((await post(env, token, '/series', body())).status).toBe(201);
     expect(sent()).toHaveLength(0);
   });
