@@ -31,6 +31,7 @@ import {
   listSeriesSkips,
   listServiceOptions,
   listServices,
+  replaceSavedAnswers,
   type SeriesRow,
   type SeriesStatus,
 } from '../db/repo';
@@ -48,6 +49,7 @@ import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './bookin
 import { isUniqueViolation } from './db-errors';
 import { DEMO_EMAIL } from './demo';
 import { phoneOnFile } from './phone';
+import { savedAnswerEntries } from './saved-answers';
 import {
   datesIn,
   maskFromNames,
@@ -171,7 +173,7 @@ type ValidSeries = {
  * The option is RESOLVED here as `createBooking` resolves it — named, or the service's first — and
  * the resolved key is what the series stores, so its walks and its terms name one slot.
  *
- * Intake answers are checked as a single booking's are and not stored: a series row carries none.
+ * Intake answers are checked as a single booking's are; the series writes them onto every walk.
  */
 export async function validateSeriesInput(
   ctx: BookingOpsContext,
@@ -290,6 +292,7 @@ export async function validateSeriesInput(
       startTime: times.startTime,
       startDate,
       endDate,
+      answers: input.answers,
     },
   };
 }
@@ -314,10 +317,10 @@ function judgedDates(rule: SeriesRule, today: string, wEnd: string, to?: string)
 }
 
 /** `SeriesTermsGone` from the engine — a term changed between the checks and the write. */
-function termsGoneFailure(e: SeriesTermsGone): OpFailure {
+export function termsGoneFailure(e: SeriesTermsGone): OpFailure {
   switch (e.what) {
     case 'service':
-      return fail(409, 'Service not offered.', 'service_not_offered');
+      return fail(400, 'Service not offered.', 'service_not_offered');
     case 'option':
       return fail(400, 'Unknown service option.', 'unknown_option');
     case 'pet':
@@ -479,6 +482,17 @@ export async function requestSeries(
     }
     throw e;
   }
+  // The answers become the pre-fill for their next booking of this service, exactly as a single
+  // booking's do — best-effort, because the series is already written.
+  await replaceSavedAnswers(
+    db,
+    tenant.Id,
+    endUserId,
+    v.service.ServiceType,
+    savedAnswerEntries(v.service.Questions, input.answers),
+  ).catch((err) => {
+    console.error('saving intake answers failed', err);
+  });
   const saved = await getSeries(db, tenant.Id, series.Id);
   if (!saved) throw new Error('series vanished after its own write');
   return ok(await seriesWire(env, tenant, saved, today), 201);

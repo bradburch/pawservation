@@ -19,6 +19,7 @@ import {
   listSeriesBookingDates,
   listSeriesSkips,
   deleteBookingRequestsStatements,
+  getSeriesEarliestRowAnswers,
   insertSeriesRowStatements,
   insertSeriesSkipStatement,
   runSeriesBatch,
@@ -45,6 +46,8 @@ export type SeriesTerms = {
   startTime: string | null;
   startDate: string;
   endDate: string | null;
+  /** Intake answers written on every walk this call creates; `{}` when absent. */
+  answers?: Record<string, string>;
 };
 export type WalkEval =
   { date: string; estCostCents: number } | { date: string; skipped: SkipReason };
@@ -275,6 +278,7 @@ export async function materializeSpan(
         startTime: terms.startTime,
         estCostCents: w.estCostCents,
         status: rowStatus,
+        answers: terms.answers,
       }),
     );
     added.push({ id, date: w.date });
@@ -314,6 +318,31 @@ export async function materializeSpan(
     }
   }
   return { added, skipped };
+}
+
+/**
+ * The intake answers a series' walks carry: its earliest row's, so a walk added by a later pass
+ * (the window moving on) carries the same answers the request gave. `{}` when the series has no
+ * row yet or the stored value is unreadable — never a throw, as every other answers read.
+ */
+export async function seriesAnswers(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<Record<string, string>> {
+  const raw = await getSeriesEarliestRowAnswers(db, tenantId, seriesId);
+  if (raw === null) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (e): e is [string, string] => typeof e[1] === 'string',
+      ),
+    );
+  } catch {
+    return {};
+  }
 }
 
 const PROJECTED_STATUS: Partial<Record<SeriesRow['Status'], ProjectedWalk['status']>> = {

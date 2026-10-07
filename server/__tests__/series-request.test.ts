@@ -7,7 +7,13 @@ import {
   insertSeriesStatement,
   type SeriesRow,
 } from '../db/repo';
-import { materializeSpan, type SeriesTerms } from '../lib/series-walks';
+import {
+  materializeSpan,
+  seriesAnswers,
+  SeriesTermsGone,
+  type SeriesTerms,
+} from '../lib/series-walks';
+import { termsGoneFailure } from '../lib/series-ops';
 import { projectionCap } from '../lib/series-rule';
 import {
   addDays,
@@ -635,5 +641,87 @@ describe('POST /api/:slug/series', () => {
     expect(res.status).toBe(400);
     expect(((await res.json()) as { code: string }).code).toBe('unknown_pet');
     expect(counts(raw)).toEqual(before);
+  });
+});
+
+describe('a series carries its intake answers', () => {
+  const QUESTIONS = JSON.stringify([
+    { id: 'gate', label: 'Gate code', type: 'text', required: true },
+  ]);
+
+  it('request: every walk row carries the answers, the pre-fill is saved, and the same-email client of another sitter is untouched', async () => {
+    const { env, raw, token } = await world();
+    for (const t of [TENANT_A, 'tnt_happytails'])
+      raw
+        .prepare(
+          `UPDATE TenantServices SET Questions = ? WHERE TenantId = ? AND ServiceType = 'walk'`,
+        )
+        .run(QUESTIONS, t);
+    raw.exec(`INSERT INTO SavedAnswers (TenantId, EndUserId, ServiceType, QuestionId, Shape, Value)
+              VALUES ('tnt_happytails', 'eu_ht_jess', 'walk', 'gate', 'text', 'B-side')`);
+
+    const res = await post(env, token, '/series', body({ answers: { gate: '1234' } }));
+    expect(res.status).toBe(201);
+    const s = (await res.json()) as Wire;
+    const rows = raw
+      .prepare(`SELECT Answers FROM BookingRequests WHERE SeriesId = ?`)
+      .all(s.id) as { Answers: string }[];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => JSON.parse(r.Answers).gate === '1234')).toBe(true);
+    expect(
+      raw
+        .prepare(
+          `SELECT TenantId, EndUserId, ServiceType, QuestionId, Value FROM SavedAnswers ORDER BY TenantId`,
+        )
+        .all(),
+    ).toEqual([
+      {
+        TenantId: 'tnt_happytails',
+        EndUserId: 'eu_ht_jess',
+        ServiceType: 'walk',
+        QuestionId: 'gate',
+        Value: 'B-side',
+      },
+      {
+        TenantId: TENANT_A,
+        EndUserId: 'eu_sp_jess',
+        ServiceType: 'walk',
+        QuestionId: 'gate',
+        Value: '1234',
+      },
+    ]);
+
+    // The later extension's source: the series' earliest row.
+    expect(await seriesAnswers(env.PAWSERVATION_DB, TENANT_A, s.id)).toEqual({ gate: '1234' });
+    expect(await seriesAnswers(env.PAWSERVATION_DB, 'tnt_happytails', s.id)).toEqual({});
+  });
+
+  it('request: a missing required answer is refused invalid_answers and nothing is written', async () => {
+    const { env, raw, token } = await world();
+    raw
+      .prepare(
+        `UPDATE TenantServices SET Questions = ? WHERE TenantId = ? AND ServiceType = 'walk'`,
+      )
+      .run(QUESTIONS, TENANT_A);
+    const before = counts(raw);
+    const res = await post(env, token, '/series', body());
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code: string }).code).toBe('invalid_answers');
+    expect(counts(raw)).toEqual(before);
+  });
+
+  it('seriesAnswers: a series with no row yet answers {}', async () => {
+    const { env } = await world();
+    expect(await seriesAnswers(env.PAWSERVATION_DB, TENANT_A, 'no-such-series')).toEqual({});
+  });
+});
+
+describe('termsGoneFailure — a term gone between the checks and the write', () => {
+  it.each([
+    ['service', 400, 'service_not_offered'],
+    ['option', 400, 'unknown_option'],
+    ['pet', 400, 'unknown_pet'],
+  ] as const)("%s → %i %s, the single booking's code and status", (what, status, code) => {
+    expect(termsGoneFailure(new SeriesTermsGone(what))).toMatchObject({ ok: false, status, code });
   });
 });

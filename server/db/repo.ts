@@ -1290,6 +1290,8 @@ export type NewSeriesRow = {
   estCostCents: number;
   status: 'pending' | 'confirmed' | 'cancelled';
   cancellationFeeCents?: number;
+  /** The series' intake answers, stored on every walk as a single booking stores its own. */
+  answers?: Record<string, string>;
 };
 
 const SERIES_COLS =
@@ -1361,7 +1363,7 @@ export function insertSeriesRowStatements(
         `INSERT INTO BookingRequests
            (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime,
             EstCost, CancellationFee, Answers, Status, Source, IdempotencyKey, SyncPending, SeriesId)
-         SELECT ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, '{}', ?, NULL, NULL, 0, ?
+         SELECT ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL, 0, ?
          WHERE EXISTS (SELECT 1 FROM BookingSeries WHERE Id = ? AND TenantId = ?)`,
       )
       .bind(
@@ -1375,6 +1377,7 @@ export function insertSeriesRowStatements(
         row.startTime,
         row.estCostCents,
         row.cancellationFeeCents ?? null,
+        JSON.stringify(row.answers ?? {}),
         row.status,
         seriesId,
         seriesId,
@@ -1628,6 +1631,26 @@ export async function listSeriesPetNames(
     .bind(tenantId, seriesId)
     .all<{ PetId: string; Name: string }>();
   return results;
+}
+
+/**
+ * The raw `Answers` of a series' earliest row — the intake answers given when it was requested,
+ * which every walk it adds later carries too (a series has no column of its own for them). Null
+ * when the series has no row yet.
+ */
+export async function getSeriesEarliestRowAnswers(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT Answers FROM BookingRequests WHERE TenantId = ? AND SeriesId = ?
+        ORDER BY StartDate, Id LIMIT 1`,
+    )
+    .bind(tenantId, seriesId)
+    .first<{ Answers: string }>();
+  return row?.Answers ?? null;
 }
 
 export async function findSeriesByIdempotencyKey(
