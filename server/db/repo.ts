@@ -1361,7 +1361,8 @@ export function insertSeriesRowStatements(
         `INSERT INTO BookingRequests
            (Id, TenantId, EndUserId, ServiceType, StartDate, EndDate, OptionKey, PetCount, StartTime, DepartureTime,
             EstCost, CancellationFee, Answers, Status, Source, IdempotencyKey, SyncPending, SeriesId)
-         VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, '{}', ?, NULL, NULL, 0, ?)`,
+         SELECT ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, '{}', ?, NULL, NULL, 0, ?
+         WHERE EXISTS (SELECT 1 FROM BookingSeries WHERE Id = ? AND TenantId = ?)`,
       )
       .bind(
         row.id,
@@ -1376,6 +1377,8 @@ export function insertSeriesRowStatements(
         row.cancellationFeeCents ?? null,
         row.status,
         seriesId,
+        seriesId,
+        tenantId,
       ),
     ...petIds.map((petId) =>
       db
@@ -1388,6 +1391,25 @@ export function insertSeriesRowStatements(
         .bind(row.id, petId, row.id, tenantId, petId, tenantId),
     ),
   ];
+}
+
+/**
+ * Fix a series that named no option to the option its walks were priced and counted with — the
+ * one `createBooking` would resolve (the service's first). Only ever fills a NULL, so a series that
+ * names its option is never rewritten; a walk and its series can then never disagree on the slot.
+ */
+export function setSeriesOptionKeyStatement(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  optionKey: string,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE BookingSeries SET OptionKey = ?, UpdatedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ? AND OptionKey IS NULL`,
+    )
+    .bind(optionKey, tenantId, seriesId);
 }
 
 /** A week not booked, and why. INSERT OR IGNORE: the first reason recorded for a date stands. */

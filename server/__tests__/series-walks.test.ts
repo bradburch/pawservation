@@ -581,6 +581,124 @@ describe('materializeSpan', () => {
   });
 });
 
+describe('materializeSpan — review fixes', () => {
+  it('a series with no option named writes the RESOLVED option on every row and on the series, so its walks hold the slot', async () => {
+    const { env, raw, tenant, user, terms } = await walkWorld(); // option capacity 1
+    const series = seedSeriesRow(raw, { id: 's1', endUserId: user, status: 'active', ...TUE });
+    raw.exec(`UPDATE BookingSeries SET OptionKey = NULL WHERE Id = 's1'`);
+    const out = await materializeSpan(
+      env,
+      tenant,
+      { ...series, OptionKey: null },
+      { ...terms, ...TUE, optionKey: null },
+      '2030-11-19',
+      '2030-11-01',
+      'confirmed',
+    );
+    expect(out.added).toHaveLength(3);
+    expect(
+      raw.prepare(`SELECT DISTINCT OptionKey FROM BookingRequests WHERE SeriesId = 's1'`).all(),
+    ).toEqual([{ OptionKey: OPTION }]);
+    expect(raw.prepare(`SELECT OptionKey FROM BookingSeries WHERE Id = 's1'`).get()).toEqual({
+      OptionKey: OPTION,
+    });
+    // A single booking on one of its dates now reads the slot as full.
+    const service = (await listServices(env.PAWSERVATION_DB, TENANT_A)).find(
+      (s) => s.ServiceType === SERVICE,
+    )!;
+    const option = (await listServiceOptions(env.PAWSERVATION_DB, TENANT_A)).find(
+      (o) => o.ServiceType === SERVICE,
+    )!;
+    const single = await walkConflictsForSpan(
+      env,
+      tenant,
+      service,
+      option,
+      ['2030-11-12'],
+      1,
+      null,
+    );
+    expect(single.get('2030-11-12')).toBe('slot_full');
+  });
+
+  it('the re-check still runs when the terms change between the batch and the re-check (service switched off mid-flight)', async () => {
+    const { env, raw, tenant, user, terms } = await walkWorld();
+    const series = seedSeriesRow(raw, { id: 's1', endUserId: user, status: 'active', ...TUE });
+    const db = env.PAWSERVATION_DB;
+    const rival = db
+      .prepare(
+        `INSERT INTO BookingRequests (Id, TenantId, EndUserId, ServiceType, StartDate, OptionKey, PetCount, EstCost, Status)
+         VALUES ('rival', ?, ?, ?, '2030-11-12', ?, 1, 2500, 'confirmed')`,
+      )
+      .bind(TENANT_A, user, SERVICE, OPTION);
+    const switchOff = db
+      .prepare(`UPDATE TenantServices SET Enabled = 0 WHERE TenantId = ? AND ServiceType = ?`)
+      .bind(TENANT_A, SERVICE);
+    const out = await materializeSpan(
+      env,
+      tenant,
+      series,
+      { ...terms, ...TUE },
+      '2030-11-19',
+      '2030-11-01',
+      'confirmed',
+      [rival, switchOff],
+    );
+    expect(out.skipped).toEqual([{ date: '2030-11-12', reason: 'full' }]);
+    expect(
+      raw.prepare(`SELECT Id FROM BookingRequests WHERE StartDate = '2030-11-12'`).all(),
+    ).toEqual([{ Id: 'rival' }]);
+  });
+
+  it('a row lost in the re-check records its real reason (time off taken mid-flight is time_off)', async () => {
+    const { env, raw, tenant, user, terms } = await walkWorld();
+    const series = seedSeriesRow(raw, { id: 's1', endUserId: user, status: 'active', ...TUE });
+    const block = env.PAWSERVATION_DB.prepare(
+      `INSERT INTO BookingRequests (Id, TenantId, ServiceType, StartDate, EndDate, PetCount, Status)
+       VALUES ('blk', ?, 'blocked', '2030-11-12', '2030-11-13', 1, 'confirmed')`,
+    ).bind(TENANT_A);
+    const out = await materializeSpan(
+      env,
+      tenant,
+      series,
+      { ...terms, ...TUE },
+      '2030-11-19',
+      '2030-11-01',
+      'confirmed',
+      [block],
+    );
+    expect(out.skipped).toEqual([{ date: '2030-11-12', reason: 'time_off' }]);
+    expect(
+      raw
+        .prepare(
+          `SELECT Reason FROM BookingSeriesSkips WHERE SeriesId = 's1' AND Date = '2030-11-12'`,
+        )
+        .get(),
+    ).toEqual({ Reason: 'time_off' });
+    expect(
+      raw.prepare(`SELECT COUNT(*) AS n FROM BookingRequests WHERE SeriesId = 's1'`).get(),
+    ).toEqual({ n: 2 });
+  });
+
+  it("a row is written only for a series that is the tenant's own", async () => {
+    const { env, raw, tenant, user, terms } = await walkWorld();
+    const series = seedSeriesRow(raw, { id: 's1', endUserId: user, status: 'active', ...TUE });
+    raw.exec(`UPDATE BookingSeries SET TenantId = 'tnt_happytails' WHERE Id = 's1'`);
+    await materializeSpan(
+      env,
+      tenant,
+      series,
+      { ...terms, ...TUE },
+      '2030-11-19',
+      '2030-11-01',
+      'confirmed',
+    );
+    expect(
+      raw.prepare(`SELECT COUNT(*) AS n FROM BookingRequests WHERE SeriesId = 's1'`).get(),
+    ).toEqual({ n: 0 });
+  });
+});
+
 describe('projectSeries', () => {
   it('returns the booking shape with projected ids, current rates and computed skips, holding no capacity', async () => {
     const { env, raw, tenant, user, terms } = await walkWorld(); // option capacity 1
@@ -739,21 +857,29 @@ describe('a switched-off service counts as gone for new walks', () => {
       .prepare(`UPDATE TenantServices SET Enabled = ? WHERE TenantId = ? AND ServiceType = ?`)
       .run(on, TENANT_A, SERVICE);
 
-  it('materializeSpan writes nothing — no rows, no skips, the mark not advanced — and keeps the rows it already has', async () => {
+  it('materializeSpan refuses it as SeriesTermsGone and writes nothing (nor the prelude) — no rows, no skips, the mark not advanced — keeping the rows it already has', async () => {
     const { env, raw, tenant, user, terms } = await walkWorld();
     const series = seedSeriesRow(raw, { id: 's1', endUserId: user, status: 'active', ...TUE });
     insertRow(raw, { id: 'own', serviceType: SERVICE, date: '2030-11-05', seriesId: 's1' });
     setEnabled(raw, 0);
-    const out = await materializeSpan(
-      env,
-      tenant,
-      series,
-      { ...terms, ...TUE },
-      '2030-11-19',
-      '2030-11-01',
-      'confirmed',
+    const prelude = env.PAWSERVATION_DB.prepare(
+      `UPDATE BookingSeries SET StartTime = '10:00' WHERE Id = 's1'`,
     );
-    expect(out).toEqual({ added: [], skipped: [] });
+    await expect(
+      materializeSpan(
+        env,
+        tenant,
+        series,
+        { ...terms, ...TUE },
+        '2030-11-19',
+        '2030-11-01',
+        'confirmed',
+        [prelude],
+      ),
+    ).rejects.toBeInstanceOf(SeriesTermsGone);
+    expect(raw.prepare(`SELECT StartTime FROM BookingSeries WHERE Id = 's1'`).get()).toEqual({
+      StartTime: '09:00',
+    });
     expect(raw.prepare(`SELECT Id FROM BookingRequests WHERE SeriesId = 's1'`).all()).toEqual([
       { Id: 'own' },
     ]);

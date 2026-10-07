@@ -11,7 +11,7 @@
  * Every span is bounded here, not by the caller: nothing iterates past `projectionCap(today)`,
  * whatever date it is handed, so a client-supplied `to` can never make a request walk decades.
  */
-import { addDays, type PricedPet } from '../../src/shared/index.js';
+import { addDays, type GroupRate, type MixRate, type PricedPet } from '../../src/shared/index.js';
 import {
   listEndUserPets,
   listServiceOptions,
@@ -23,6 +23,7 @@ import {
   insertSeriesSkipStatement,
   runSeriesBatch,
   setMaterializedThroughStatement,
+  setSeriesOptionKeyStatement,
   type OccupancyScope,
   type SeriesRow,
 } from '../db/repo';
@@ -95,12 +96,28 @@ export function estCostCentsEach(walks: WalkEval[]): number | null {
   return figures.size === 1 ? [...figures][0] : null;
 }
 
-/** The service, option and priced pets the terms name — read live, the way `createBooking` does. */
+type LoadedTerms = {
+  service: TenantService;
+  option: TenantServiceOption;
+  pets: PricedPet[];
+  rates: { groupRates: GroupRate[]; mixRates: MixRate[] };
+};
+
+/**
+ * The service, option, priced pets and rate rows the terms name — read live, the way
+ * `createBooking` does, and ONCE per engine call: everything after (the plan, the write, the
+ * re-check) uses this one reading, so terms changing mid-call can never skip a step.
+ *
+ * `'switched_off'` is a service that exists but she has turned off: gone for new walks, exactly as
+ * a single booking of it is refused (`service_not_offered`). Kept apart from a THROW only so
+ * projection can show nothing (and show the walks again when she turns it back on) without an
+ * error; every writer turns it into `SeriesTermsGone('service')`.
+ */
 async function loadTerms(
   env: Env,
   tenant: Tenant,
   terms: SeriesTerms,
-): Promise<{ service: TenantService; option: TenantServiceOption; pets: PricedPet[] }> {
+): Promise<LoadedTerms | 'switched_off'> {
   const db = env.PAWSERVATION_DB;
   const [services, options, myPets] = await Promise.all([
     listServices(db, tenant.Id),
@@ -108,9 +125,10 @@ async function loadTerms(
     listEndUserPets(db, tenant.Id, terms.endUserId),
   ]);
   const service = services.find((s) => s.ServiceType === terms.serviceType);
-  // A service she has switched off is gone for new walks, exactly as a single booking of it is
-  // refused ('service_not_offered'). Rows already written are not touched.
-  if (!service || !service.Enabled) throw new SeriesTermsGone('service');
+  if (!service) throw new SeriesTermsGone('service');
+  if (!service.Enabled) return 'switched_off';
+  // No option named → the service's first, the same fallback `createBooking` resolves. Whatever is
+  // resolved here is what gets WRITTEN, so the row is counted against the slot it was priced in.
   const option =
     terms.optionKey === null
       ? options.find((o) => o.ServiceType === terms.serviceType)
@@ -124,12 +142,51 @@ async function loadTerms(
     if (!p) throw new SeriesTermsGone('pet');
     pets.push({ id: p.Id, petType: p.PetType });
   }
-  return { service, option, pets };
+  const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
+  return { service, option, pets, rates };
+}
+
+async function requireTerms(env: Env, tenant: Tenant, terms: SeriesTerms): Promise<LoadedTerms> {
+  const loaded = await loadTerms(env, tenant, terms);
+  if (loaded === 'switched_off') throw new SeriesTermsGone('service');
+  return loaded;
+}
+
+const petCountOf = (t: LoadedTerms): number => Math.max(t.pets.length, 1);
+
+async function judge(
+  env: Env,
+  tenant: Tenant,
+  t: LoadedTerms,
+  dates: string[],
+  opts: { excludeSeriesId?: string; recorded?: Map<string, SkipReason>; scope?: OccupancyScope },
+): Promise<WalkEval[]> {
+  const open = dates.filter((d) => !opts.recorded?.has(d));
+  const conflicts = await walkConflictsForSpan(
+    env,
+    tenant,
+    t.service,
+    t.option,
+    open,
+    petCountOf(t),
+    opts.excludeSeriesId ?? null,
+    opts.scope,
+  );
+  return dates.map((date): WalkEval => {
+    const recorded = opts.recorded?.get(date);
+    if (recorded) return { date, skipped: recorded };
+    const price = estimateCost(t.service, t.option, date, date, t.pets, t.rates);
+    if (!price.priced) return { date, skipped: skipReasonOf(price.reason) };
+    const c = conflicts.get(date);
+    if (c) return { date, skipped: skipReasonOf(c) };
+    return { date, estCostCents: price.cost };
+  });
 }
 
 /**
  * Judge each date: a recorded skip stands; otherwise the price for that date (refused → its
- * reason, never a figure), then capacity for that date. Capacity is read once for the span.
+ * reason, never a figure), then capacity for that date. Capacity is read once for the span. A
+ * switched-off service is `SeriesTermsGone('service')`.
  */
 export async function evaluateWalks(
   env: Env,
@@ -143,57 +200,27 @@ export async function evaluateWalks(
   },
 ): Promise<WalkEval[]> {
   if (dates.length === 0) return [];
-  const { service, option, pets } = await loadTerms(env, tenant, terms);
-  const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
-  const open = dates.filter((d) => !opts.recorded?.has(d));
-  const conflicts = await walkConflictsForSpan(
-    env,
-    tenant,
-    service,
-    option,
-    open,
-    Math.max(pets.length, 1),
-    opts.excludeSeriesId ?? null,
-    opts.scope,
-  );
-  return dates.map((date): WalkEval => {
-    const recorded = opts.recorded?.get(date);
-    if (recorded) return { date, skipped: recorded };
-    const price = estimateCost(service, option, date, date, pets, rates);
-    if (!price.priced) return { date, skipped: skipReasonOf(price.reason) };
-    const c = conflicts.get(date);
-    if (c) return { date, skipped: skipReasonOf(c) };
-    return { date, estCostCents: price.cost };
-  });
+  return judge(env, tenant, await requireTerms(env, tenant, terms), dates, opts);
 }
 
 const earlier = (a: string, b: string): string => (a < b ? a : b);
-
-/**
- * The series' service exists but she has switched it off. Not an error for the two series-shaped
- * passes: materializing writes nothing and leaves the mark where it was, and projection shows
- * nothing — both are recomputed on the next pass, so the walks return when she switches it back
- * on. A service that is GONE (deleted) still throws `SeriesTermsGone` through `loadTerms`.
- */
-async function serviceSwitchedOff(env: Env, tenant: Tenant, terms: SeriesTerms): Promise<boolean> {
-  const service = (await listServices(env.PAWSERVATION_DB, tenant.Id)).find(
-    (s) => s.ServiceType === terms.serviceType,
-  );
-  return service !== undefined && !service.Enabled;
-}
 
 /**
  * Write the series' walks from where it last stopped (or from its start, never earlier than
  * tomorrow) through `through` — capped at `projectionCap(today)` — in ONE batch: `prelude` first
  * (a new series and its pets), then a row or a skip per date, then the MaterializedThrough mark.
  * Dates that already have a row (any status) or a recorded skip are not judged again, so a second
- * pass over the same span writes nothing.
+ * pass over the same span writes nothing. Gone terms — a switched-off or deleted service, a
+ * missing option, a pet no longer the client's — throw `SeriesTermsGone` before anything, the
+ * prelude included, is written. Every row carries the RESOLVED option, and a series that named
+ * none is fixed to it in the same batch.
  *
  * THE RE-CHECK. The plan was judged on a read; a concurrent writer may have filled a day since.
  * After the batch, every row this call inserted is asked again "do I still fit, ignoring this
- * series' own walks?"; a row that no longer fits is deleted and recorded `full`. Only rows THIS
- * call inserted are ever deleted — the existing fail-safe direction: two racers may both lose,
- * neither double-books.
+ * series' own walks?" — against the terms read at the start of the call, so a change since cannot
+ * skip it. A row that no longer fits is deleted and recorded with the reason it no longer fits.
+ * Only rows THIS call inserted are ever deleted — the existing fail-safe direction: two racers may
+ * both lose, neither double-books.
  */
 export async function materializeSpan(
   env: Env,
@@ -209,11 +236,7 @@ export async function materializeSpan(
   skipped: { date: string; reason: SkipReason }[];
 }> {
   const db = env.PAWSERVATION_DB;
-  if (await serviceSwitchedOff(env, tenant, terms)) {
-    // The caller's prelude is still its own to land; nothing of the series' walks is written.
-    await runSeriesBatch(db, prelude);
-    return { added: [], skipped: [] };
-  }
+  const t = await requireTerms(env, tenant, terms);
   const end = earlier(through, projectionCap(today));
   // Today's walk is never created late: a series asked for today starts tomorrow; an existing row
   // for today stays. (Same-day lead is MinLeadDays' job at request time.)
@@ -227,9 +250,11 @@ export async function materializeSpan(
   ]);
   const recorded = new Set(recordedSkips.map((s) => s.Date));
   const dates = datesIn(terms, from, end).filter((d) => !existing.has(d) && !recorded.has(d));
-  const plan = await evaluateWalks(env, tenant, terms, dates, { excludeSeriesId: series.Id });
+  const plan = await judge(env, tenant, t, dates, { excludeSeriesId: series.Id });
 
   const statements = [...prelude];
+  if (terms.optionKey === null)
+    statements.push(setSeriesOptionKeyStatement(db, tenant.Id, series.Id, t.option.OptionKey));
   const added: { id: string; date: string }[] = [];
   const skipped: { date: string; reason: SkipReason }[] = [];
   for (const w of plan) {
@@ -245,7 +270,7 @@ export async function materializeSpan(
         endUserId: terms.endUserId,
         serviceType: terms.serviceType,
         date: w.date,
-        optionKey: terms.optionKey,
+        optionKey: t.option.OptionKey,
         petIds: terms.petIds,
         startTime: terms.startTime,
         estCostCents: w.estCostCents,
@@ -259,17 +284,19 @@ export async function materializeSpan(
   await runSeriesBatch(db, statements); // all or nothing
 
   if (added.length > 0) {
-    const { service, option, pets } = await loadTerms(env, tenant, terms);
     const after = await walkConflictsForSpan(
       env,
       tenant,
-      service,
-      option,
+      t.service,
+      t.option,
       added.map((a) => a.date),
-      Math.max(pets.length, 1),
+      petCountOf(t),
       series.Id,
     );
-    const lost = added.filter((a) => after.get(a.date));
+    const lost = added.flatMap((a) => {
+      const c = after.get(a.date);
+      return c ? [{ ...a, reason: skipReasonOf(c) }] : [];
+    });
     if (lost.length > 0) {
       await runSeriesBatch(db, [
         ...deleteBookingRequestsStatements(
@@ -277,12 +304,12 @@ export async function materializeSpan(
           tenant.Id,
           lost.map((l) => l.id),
         ),
-        ...lost.map((l) => insertSeriesSkipStatement(db, tenant.Id, series.Id, l.date, 'full')),
+        ...lost.map((l) => insertSeriesSkipStatement(db, tenant.Id, series.Id, l.date, l.reason)),
       ]);
       const lostIds = new Set(lost.map((l) => l.id));
       const kept = added.filter((a) => !lostIds.has(a.id));
       added.splice(0, added.length, ...kept);
-      skipped.push(...lost.map((l) => ({ date: l.date, reason: 'full' as const })));
+      skipped.push(...lost.map((l) => ({ date: l.date, reason: l.reason })));
       skipped.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     }
   }
@@ -313,7 +340,6 @@ export async function projectSeries(
 ): Promise<ProjectedWalk[]> {
   const status = PROJECTED_STATUS[series.Status];
   if (status === undefined) return [];
-  if (await serviceSwitchedOff(env, tenant, terms)) return [];
   const db = env.PAWSERVATION_DB;
   const [rows, skips] = await Promise.all([
     listSeriesBookingDates(db, tenant.Id, series.Id),
@@ -324,7 +350,12 @@ export async function projectSeries(
   const start = from > tomorrow ? from : tomorrow;
   const end = earlier(to, projectionCap(today));
   const dates = datesIn(terms, start, end).filter((d) => !rows.has(d));
-  const evals = await evaluateWalks(env, tenant, terms, dates, { recorded });
+  if (dates.length === 0) return [];
+  const t = await loadTerms(env, tenant, terms);
+  // Switched off: nothing projected, and — projection being computed — the walks reappear the
+  // moment she switches the service back on.
+  if (t === 'switched_off') return [];
+  const evals = await judge(env, tenant, t, dates, { recorded });
   return evals.map((w) => ({
     id: projectedId(series.Id, w.date),
     date: w.date,
