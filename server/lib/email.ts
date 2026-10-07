@@ -208,6 +208,40 @@ export async function sendBookingStatusEmail(
   });
 }
 
+/**
+ * The client's one email when the sitter answers a whole repeating request — one per series, never
+ * one per walk. It names the pattern in words and carries NO figure: each walk is priced for its
+ * own date, so a single number here would be one the sitter never stated. Throws if email is not
+ * configured or Resend rejects; the caller reports that as `notified: false`.
+ */
+export async function sendSeriesStatusEmail(
+  env: Env,
+  to: string,
+  displayName: string,
+  statusWord: 'confirmed' | 'declined',
+  patternText: string,
+): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // displayName and patternText are tenant/user-derived → escaped in HTML. statusWord is one of
+  // two code literals — safe unescaped. Subject/text are plain-text JSON fields in Resend's API.
+  const priceLine =
+    'Every walk is listed on your bookings, and each walk is priced for its own date.';
+  await resendPost(env, env.RESEND_FROM_BOOKING!, {
+    to,
+    subject: `Your repeating booking with ${displayName} was ${statusWord}`,
+    text:
+      `${displayName} has ${statusWord} your repeating booking (${patternText}).\n\n` +
+      `${priceLine}\n\n` +
+      `You can review your bookings anytime on ${displayName}'s booking page — sign in with this email address.`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">${htmlEscape(displayName)} has <strong>${statusWord}</strong> your repeating booking (${htmlEscape(patternText)}).</p>` +
+        `<p style="margin:8px 0 0;">${htmlEscape(priceLine)}</p>` +
+        `<p style="margin:8px 0 0;">You can review your bookings anytime on ${htmlEscape(displayName)}&#39;s booking page &mdash; sign in with this email address.</p>`,
+      `Sent by Pawservation on behalf of ${displayName}`,
+    ),
+  });
+}
+
 /** What the sitter needs to know about a cancellation without opening the dashboard. */
 export type CancellationNotice = {
   /** The sitter's own business name — for the footer, same as every other template. */

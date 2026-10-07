@@ -25,6 +25,7 @@ import {
   getHouseholdDetail,
   getHouseholdsWithUnappliedCredits,
   armSeriesSync,
+  getSeries,
   cancelBlockedRange,
   deleteBookingCharge,
   deleteCustomer,
@@ -159,7 +160,12 @@ import {
   parseCsvColumnMapping,
 } from '../lib/payment-csv';
 import { feeToCancelTodayForList } from '../lib/booking-ops';
-import { getSitterSeries, listSitterSeries } from '../lib/series-ops';
+import {
+  decideSeries,
+  getSitterSeries,
+  listSitterSeries,
+  type SeriesDecisionInput,
+} from '../lib/series-ops';
 import { LIVE_SERIES_STATUSES, projectedListWalks } from '../lib/series-reads';
 import { listRange, respond } from './bookings';
 import { NONCE_KEY } from './oauth';
@@ -2888,6 +2894,25 @@ export const adminRoutes = new Hono<AppEnv>()
     return respond(c, await getSitterSeries(c.env, c.get('tenant'), c.req.param('id'), range.span));
   })
 
+  // One decision for a whole repeating request: confirm or decline every pending walk at once,
+  // `ifVersion`-guarded. `planExempt` for the reason the single route below gives — a series
+  // request is a request she must be able to answer.
+  .post('/:slug/admin/series/:id/status', planExempt, async (c) => {
+    const body = await c.req.json<SeriesDecisionInput>().catch(() => ({}) as SeriesDecisionInput);
+    const result = await decideSeries(c.env, c.get('tenant'), c.req.param('id'), body ?? {});
+    if (!result.ok && 'requiresOverride' in result)
+      return c.json(
+        {
+          error: result.error,
+          code: result.code,
+          requiresOverride: result.requiresOverride,
+          dates: result.dates,
+        },
+        409,
+      );
+    return respond(c, result);
+  })
+
   // `planExempt` (lib/middleware.ts): a lapsed business may still ANSWER a request. Her clients
   // keep submitting them under A-17, and a request loop that takes requests in but lets none be
   // answered is a pile, not a booking page.
@@ -2904,6 +2929,23 @@ export const adminRoutes = new Hono<AppEnv>()
     const status = body.status;
     if (status !== 'confirmed' && status !== 'cancelled' && status !== 'declined')
       return c.json({ error: "Status must be 'confirmed', 'declined', or 'cancelled'." }, 400);
+
+    // A WALK OF A SERIES STILL PENDING is answered with its series, never on its own: confirming
+    // one week of a request she has not accepted would leave a series half-answered. Read BEFORE
+    // the update, so the refusal is an answer rather than a third reason for zero rows changed.
+    const before = await getBookingWithCustomer(c.env.PAWSERVATION_DB, tenant.Id, id);
+    if (before?.SeriesId) {
+      const series = await getSeries(c.env.PAWSERVATION_DB, tenant.Id, before.SeriesId);
+      if (series?.Status === 'pending')
+        return c.json(
+          {
+            error:
+              'This walk belongs to a repeating request — confirm or decline the whole series.',
+            code: 'decide_series',
+          },
+          409,
+        );
+    }
 
     // OPTIONAL PRECONDITION. A dashboard card is a snapshot: the client may have edited the booking
     // since it was drawn, and answering the old card would confirm, decline or cancel something the

@@ -267,6 +267,24 @@ describe('GET /api/:slug/admin/bookings — the projection arm', () => {
   it('admin bookings with to: projected rows carry paidTotalCents 0, charges [], chargesTotalCents 0', async () => {
     const { env, raw, token } = await world();
     const id = await seedSeries(env, raw, token, { active: true });
+    // One single booking, so the comparison against a single row below has a row to compare with:
+    // rows are listed whatever the range, so a near date shows in a list asked for a far one.
+    const booked = await app.request(
+      '/api/sunny-paws/bookings',
+      {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'walk',
+          optionKey: 'd30',
+          startDate: addDays(TODAY(), 9),
+          petIds: ['pet_sp_mochi'],
+          answers: {},
+        }),
+      },
+      env,
+    );
+    expect(booked.status).toBe(201);
     const target = onOrAfter(addDays(WINDOW_END(), 30), 2);
     const res = await get(
       env,
@@ -299,16 +317,18 @@ describe('GET /api/:slug/admin/bookings — the projection arm', () => {
     expectSameShape(walk!, real, ['estCostCents', 'feeIfCancelledTodayCents', 'startTime']);
     // …and against a single booking's row too, which is the shape every reader already knows.
     const single = bookings.find((b) => b.projected === undefined && b.seriesId === null);
-    if (single)
-      expectSameShape(walk!, single, [
-        'estCostCents',
-        'feeIfCancelledTodayCents',
-        'startTime',
-        'endDate',
-        'departureTime',
-        'optionKey',
-        'cancellationFeeCents',
-      ]);
+    expect(single).toBeDefined();
+    expectSameShape(walk!, single!, [
+      'estCostCents',
+      'feeIfCancelledTodayCents',
+      'startTime',
+      'endDate',
+      'departureTime',
+      'optionKey',
+      'cancellationFeeCents',
+      // A single booking belongs to no series: the key is there, and null.
+      'seriesId',
+    ]);
   });
 
   it('admin bookings without to is the row list only', async () => {

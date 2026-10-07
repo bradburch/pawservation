@@ -5,6 +5,7 @@ import {
   sendLoginCode,
   sendBookingStatusEmail,
   sendCancellationNoticeToSitter,
+  sendSeriesStatusEmail,
   sendInvite,
   sendSignupLink,
   sendSitterInvite,
@@ -97,6 +98,11 @@ const TEMPLATES: [string, (send: typeof env) => Promise<void>, boolean][] = [
   [
     'sendBookingStatusEmail',
     (e) => sendBookingStatusEmail(e, 'a@b.test', HOSTILE, 'confirmed', `Aug 3 ${HOSTILE}`),
+    true,
+  ],
+  [
+    'sendSeriesStatusEmail',
+    (e) => sendSeriesStatusEmail(e, 'a@b.test', HOSTILE, 'declined', `every ${HOSTILE}`),
     true,
   ],
   [

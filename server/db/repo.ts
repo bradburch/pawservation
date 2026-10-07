@@ -1480,6 +1480,77 @@ export function deleteBookingRequestsStatements(
   ];
 }
 
+/**
+ * THE SERIES CAS: move a series from one of `from` to `to`, only at `ifVersion`, bumping Version
+ * and re-arming its calendar mirror. Always FIRST in its `db.batch`; the caller reads
+ * `results[0].meta.changes === 0` as a lost race (409 series_changed). Every later statement in the
+ * batch carries `seriesAtGuard` for the version and status this one writes, so a lost CAS writes
+ * nothing after it.
+ */
+export function setSeriesStatusStatement(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+  from: SeriesStatus[],
+  to: SeriesStatus,
+  ifVersion: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE BookingSeries
+          SET Status = ?, Version = Version + 1, SyncPending = 1, UpdatedAt = datetime('now')
+        WHERE TenantId = ? AND Id = ? AND Status IN (${from.map(() => '?').join(', ')})
+          AND Version = ?`,
+    )
+    .bind(to, tenantId, id, ...from, ifVersion);
+}
+
+/**
+ * The new-version guard of a CAS batch: the series is at exactly the version AND status the CAS
+ * writes. Version alone is not enough — another writer that moved the version on to the same
+ * number (a reprice) would pass it after this batch's CAS lost; status pins it to this transition.
+ */
+const seriesAtGuard = `EXISTS (SELECT 1 FROM BookingSeries
+   WHERE TenantId = ? AND Id = ? AND Version = ? AND Status = ?)`;
+
+/** Every pending walk of the series confirmed — only behind a CAS that made it `active`. A series
+ *  row's SyncPending is never touched: the series' mirror carries the calendar. */
+export function confirmSeriesRowsStatement(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  newVersion: number,
+): D1PreparedStatement {
+  return seriesRowsStatement(db, tenantId, seriesId, 'confirmed', 'active', newVersion);
+}
+
+/** Every pending walk of the series declined — only behind a CAS that made it `declined`. */
+export function declineSeriesRowsStatement(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  newVersion: number,
+): D1PreparedStatement {
+  return seriesRowsStatement(db, tenantId, seriesId, 'declined', 'declined', newVersion);
+}
+
+function seriesRowsStatement(
+  db: D1Database,
+  tenantId: string,
+  seriesId: string,
+  rowStatus: 'confirmed' | 'declined',
+  seriesStatus: SeriesStatus,
+  newVersion: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE BookingRequests SET Status = ?
+        WHERE TenantId = ? AND SeriesId = ? AND Status = 'pending'
+          AND ${seriesAtGuard}`,
+    )
+    .bind(rowStatus, tenantId, seriesId, tenantId, seriesId, newVersion, seriesStatus);
+}
+
 /** One `db.batch` — all or nothing. An empty list is a no-op. */
 export async function runSeriesBatch(
   db: D1Database,

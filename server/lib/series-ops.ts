@@ -22,17 +22,22 @@ import {
   findSeriesByIdempotencyKey,
   getEndUserById,
   getSeries,
+  confirmSeriesRowsStatement,
+  declineSeriesRowsStatement,
   getSitterNotificationEmail,
   insertSeriesPetStatements,
   insertSeriesStatement,
   listEndUserPets,
   listPetTypes,
   getSeriesWithClient,
+  listSeriesBookingRows,
   listSeriesForUser,
+  listSeriesPetIds,
   listSeriesWithClientForTenant,
   listServiceOptions,
   listServices,
   replaceSavedAnswers,
+  setSeriesStatusStatement,
   type SeriesRow,
   type SeriesStatus,
   type SeriesWithClient,
@@ -51,7 +56,8 @@ import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './bookin
 import { isUniqueViolation } from './db-errors';
 import { DEMO_EMAIL } from './demo';
 import { phoneOnFile } from './phone';
-import { isEmailConfigured, sendSeriesRequestToSitter } from './email';
+import { isEmailConfigured, sendSeriesRequestToSitter, sendSeriesStatusEmail } from './email';
+import { walkConflictsForSpan } from './availability';
 import { savedAnswerEntries } from './saved-answers';
 import {
   datesIn,
@@ -742,6 +748,163 @@ export async function getSitterSeries(
   const row = await getSeriesWithClient(env.PAWSERVATION_DB, tenant.Id, id);
   if (!row) return fail(404, 'Not found.', 'not_found');
   return ok((await adminWires(env, tenant, [row], tenantToday(tenant), span))[0]);
+}
+
+// ─── The sitter's one decision ───────────────────────────────────────────────
+
+/** The sitter's answer to a whole series, as untrusted as it arrived. */
+export type SeriesDecisionInput = {
+  status?: unknown;
+  ifVersion?: unknown;
+  overrideCapacity?: unknown;
+};
+
+/** The decided series, whether the client was told, and the dates a confirm over-committed. */
+export type SeriesDecision = AdminSeriesWire & { notified: boolean; overbookedDates: string[] };
+
+/** A confirm that would over-commit her calendar: the dates, and how to go ahead anyway. */
+export type SeriesCapacityConflict = OpFailure & {
+  code: 'capacity_conflict';
+  requiresOverride: true;
+  dates: string[];
+};
+
+const OVERBOOK_WARNING =
+  'Some of these walks fall on a day that is already full or closed on your calendar. ' +
+  'Confirming anyway will double-book you on those dates.';
+
+/**
+ * Confirm or decline every pending walk of a client's repeating request at once.
+ *
+ * In order: the body (`invalid_status`, `if_version_required`); the series, hers (404 otherwise —
+ * another sitter's id is the same 404); `ifVersion` against the series' Version (409
+ * `series_changed`); the series is `pending` (409 `series_not_pending`). A confirm then runs the
+ * single booking's confirm re-check over every pending walk — committed bookings only, the series'
+ * own rows left out in SQL — and refuses 409 `capacity_conflict` naming the dates unless
+ * `overrideCapacity: true`, in which case the answer names them in `overbookedDates`.
+ *
+ * The write is ONE batch: the CAS on the series first, then the rows statement guarded on the
+ * version and status the CAS writes. A CAS that lost a race since the read changes nothing, and is
+ * 409 `series_changed`. The client is emailed once for the series, never per walk, and
+ * `notified` says honestly whether that email went.
+ */
+export async function decideSeries(
+  env: Env,
+  tenant: Tenant,
+  id: string,
+  input: SeriesDecisionInput,
+): Promise<OpResult<SeriesDecision> | SeriesCapacityConflict> {
+  const { status, ifVersion } = input;
+  if (status !== 'confirmed' && status !== 'declined')
+    return fail(400, "Status must be 'confirmed' or 'declined'.", 'invalid_status');
+  if (typeof ifVersion !== 'number' || !Number.isInteger(ifVersion))
+    return fail(
+      400,
+      'Send the version of the series you are answering (ifVersion).',
+      'if_version_required',
+    );
+
+  const db = env.PAWSERVATION_DB;
+  const series = await getSeriesWithClient(db, tenant.Id, id);
+  if (!series) return fail(404, 'Not found.', 'not_found');
+  if (series.Version !== ifVersion) return seriesChanged();
+  if (series.Status !== 'pending')
+    return fail(409, 'This series has already been answered.', 'series_not_pending');
+
+  let overbookedDates: string[] = [];
+  if (status === 'confirmed') {
+    overbookedDates = await confirmOverbookedDates(env, tenant, series);
+    if (overbookedDates.length > 0 && input.overrideCapacity !== true)
+      return {
+        ok: false,
+        status: 409,
+        error: OVERBOOK_WARNING,
+        code: 'capacity_conflict',
+        requiresOverride: true,
+        dates: overbookedDates,
+      };
+  }
+
+  const newVersion = ifVersion + 1;
+  const results = await db.batch([
+    setSeriesStatusStatement(
+      db,
+      tenant.Id,
+      id,
+      ['pending'],
+      status === 'confirmed' ? 'active' : 'declined',
+      ifVersion,
+    ),
+    status === 'confirmed'
+      ? confirmSeriesRowsStatement(db, tenant.Id, id, newVersion)
+      : declineSeriesRowsStatement(db, tenant.Id, id, newVersion),
+  ]);
+  if ((results[0].meta as { changes?: number }).changes === 0) return seriesChanged();
+
+  const decided = await getSeriesWithClient(db, tenant.Id, id);
+  if (!decided) return fail(404, 'Not found.', 'not_found');
+  const [wire] = await adminWires(env, tenant, [decided], tenantToday(tenant), {});
+
+  // Awaited, not deferred: `notified` must say whether the client was actually told.
+  let notified = false;
+  if (isEmailConfigured(env) && decided.CustomerEmail) {
+    try {
+      await sendSeriesStatusEmail(
+        env,
+        decided.CustomerEmail,
+        tenant.DisplayName,
+        status,
+        wire.pattern,
+      );
+      notified = true;
+    } catch {
+      /* the decision stands; the dashboard reports the client was not emailed */
+    }
+  }
+  return ok({ ...wire, notified, overbookedDates });
+}
+
+const seriesChanged = (): OpFailure =>
+  fail(
+    409,
+    'This series was changed after you loaded it. Refresh to see it as it is now, then answer again.',
+    'series_changed',
+  );
+
+/**
+ * The dates on which confirming this series' pending walks would exceed what she has already
+ * committed to — `confirmOverbookWarning`'s rule, per walk: committed bookings only, the series'
+ * own rows excluded in SQL. A service or option since deleted has no cap left to break (as there).
+ */
+async function confirmOverbookedDates(
+  env: Env,
+  tenant: Tenant,
+  series: SeriesRow,
+): Promise<string[]> {
+  const db = env.PAWSERVATION_DB;
+  const [services, options, petIds, rows] = await Promise.all([
+    listServices(db, tenant.Id),
+    listServiceOptions(db, tenant.Id),
+    listSeriesPetIds(db, tenant.Id, series.Id),
+    listSeriesBookingRows(db, tenant.Id, series.Id),
+  ]);
+  const service = services.find((s) => s.ServiceType === series.ServiceType);
+  const option = options.find(
+    (o) => o.ServiceType === series.ServiceType && o.OptionKey === series.OptionKey,
+  );
+  if (!service || !option) return [];
+  const dates = rows.filter((r) => r.Status === 'pending').map((r) => r.StartDate);
+  const conflicts = await walkConflictsForSpan(
+    env,
+    tenant,
+    service,
+    option,
+    dates,
+    Math.max(1, new Set(petIds).size),
+    series.Id,
+    'committed-only',
+  );
+  return dates.filter((d) => conflicts.get(d) != null).sort();
 }
 
 /** The demo identity's answer: what the request would have created, with nothing behind it. */

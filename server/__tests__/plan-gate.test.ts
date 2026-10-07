@@ -271,9 +271,10 @@ describe('two businesses, because a cross-tenant lapse looks completely ordinary
  * or a calendar she connected must be revocable by a sitter whose plan has lapsed, or the lapse
  * turns a leak into a standing one. And money a client already handed her is a fact whether or not
  * she is paying for the dashboard — a lapse that refused to record it, or to reverse a record made
- * in error, would leave her books WRONG rather than merely frozen. So five writes are exempt:
- * answering a request, blocking dates, revoking a token, disconnecting the calendar, and recording
- * or reversing a payment. Everything else stays refused.
+ * in error, would leave her books WRONG rather than merely frozen. So nine routes are exempt, in
+ * five kinds of write: answering a request (one booking, or a repeating series whole), blocking
+ * and unblocking dates, revoking a token (by id, or a token revoking itself), disconnecting the
+ * calendar, and recording or reversing a payment. Everything else stays refused.
  *
  * BY A MARKER ON THE ROUTE, NOT A PATH LIST IN THE MIDDLEWARE. `planExempt` is a no-op middleware
  * placed in the exempt route's own handler chain; `planGate` finds it on the request's matched
@@ -435,9 +436,16 @@ describe('what the gate exempts, by a marker on the route', () => {
     // The mechanism: the gate looks for `planExempt` among the handlers matched for this request.
     expect(middleware).toContain('matchedRoutes(c)');
     expect(middleware).toContain('handler === planExempt');
-    // And NOT a list: none of the five exempt paths is spelled in the middleware. A future route
-    // that wants out declares it on its own line, beside its handler, where its reviewer is.
-    for (const fragment of ['/status', '/blocked', '/tokens', '/disconnect', '/payments']) {
+    // And NOT a list: none of the six exempt path fragments is spelled in the middleware. A future
+    // route that wants out declares it on its own line, beside its handler, where its reviewer is.
+    for (const fragment of [
+      '/status',
+      '/series',
+      '/blocked',
+      '/tokens',
+      '/disconnect',
+      '/payments',
+    ]) {
       expect(middleware, fragment).not.toContain(fragment);
     }
     // The marker is on each exempt route's own line, in the file that declares the route.
@@ -446,6 +454,7 @@ describe('what the gate exempts, by a marker on the route', () => {
       { keepLiterals: true },
     ).replace(/\s+/g, ' ');
     expect(admin).toContain(".post('/:slug/admin/bookings/:id/status', planExempt,");
+    expect(admin).toContain(".post('/:slug/admin/series/:id/status', planExempt,");
     expect(admin).toContain(".post('/:slug/admin/blocked', planExempt,");
     expect(admin).toContain(".delete('/:slug/admin/blocked/:id', planExempt,");
     expect(admin).toContain(".post('/:slug/admin/providers/calendar/disconnect', planExempt,");

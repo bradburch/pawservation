@@ -331,8 +331,9 @@ export const adminSessionOnly = createMiddleware<AppEnv>(async (c, next) => {
  *
  * WHAT IS EXEMPT, AND WHY — the set is small, and every member is a write that keeps something
  * from getting worse rather than one that builds anything:
- *   - ANSWERING A BOOKING REQUEST (`/:slug/admin/bookings/:id/status`) and BLOCKING OR UNBLOCKING
- *     DATES (`/:slug/admin/blocked`). A-17's promise is that her clients keep booking while her
+ *   - ANSWERING A BOOKING REQUEST (`/:slug/admin/bookings/:id/status`, and a repeating request
+ *     whole at `/:slug/admin/series/:id/status`) and BLOCKING OR UNBLOCKING DATES
+ *     (`/:slug/admin/blocked`). A-17's promise is that her clients keep booking while her
  *     dashboard goes quiet — but a request her clients keep submitting is one she must be able to
  *     answer, on dates she must be able to close, or the requests pile up unanswered against a
  *     calendar she cannot block. So the whole request loop keeps working; what she loses is
