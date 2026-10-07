@@ -1244,8 +1244,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           </div>
           <div class="wf-math">
             <h3 class="wf-h">What if you want to take your book elsewhere?</h3>
-            <p>Under Business in your dashboard, Export your data gives you four downloads: clients, pets, bookings and payments, as ordinary CSVs that open in Excel, Numbers or Google Sheets. Cancelled bookings, declined requests and pets who have died are all there with their status in a column.</p>
-            <p>These are your records. Your settings stay here, meaning your services, rates, cancellation policies and questions, and so does your time off, which is in none of the four files. It goes one way only: there is nothing scheduled to set up, and no way to load one of these files back in.</p>
+            <p>Under Business in your dashboard, Export your data gives you five downloads: clients, pets, bookings, repeating bookings and payments, as ordinary CSVs that open in Excel, Numbers or Google Sheets. Cancelled bookings, declined requests and pets who have died are all there with their status in a column.</p>
+            <p>These are your records. Your settings stay here, meaning your services, rates, cancellation policies and questions, and so does your time off, which is in none of the five files. It goes one way only: there is nothing scheduled to set up, and no way to load one of these files back in.</p>
           </div>
           <!-- The four rules moved here from /about on 2026-09-09, when the owner narrowed that
                page to why it exists and who made it. They are stated on no other page, so this was

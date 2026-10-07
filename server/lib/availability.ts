@@ -731,8 +731,7 @@ export async function walkConflictsForSpan(
   excludeSeriesId: string | null,
   scope: OccupancyScope = 'all-live',
 ): Promise<Map<string, WalkConflict | null>> {
-  const out = new Map<string, WalkConflict | null>();
-  if (dates.length === 0) return out;
+  if (dates.length === 0) return new Map();
   const sorted = [...dates].sort();
   const from = sorted[0];
   const toEx = addDays(sorted[sorted.length - 1], 1);
@@ -754,10 +753,34 @@ export async function walkConflictsForSpan(
   ]);
   const rows =
     excludeSeriesId === null ? allRows : allRows.filter((r) => r.SeriesId !== excludeSeriesId);
-  const capacity = capacityFromRows(tenant.Id, rows);
+  return classifyWalks(spanOccupancy(tenant.Id, rows), option, slots, dates, petCount);
+}
+
+/** A span's blocking rows and the day capacity built from them — built once, judged many times. */
+export type SpanOccupancy = { rows: CapacityRow[]; capacity: Map<string, DayCapacity> };
+
+export function spanOccupancy(tenantId: string, rows: CapacityRow[]): SpanOccupancy {
+  return { rows, capacity: capacityFromRows(tenantId, rows) };
+}
+
+/**
+ * The pure half of `walkConflictsForSpan`: each date judged against occupancy already read. Split
+ * out so a read of many series (a booking list asked for a range) reads the span's rows once and
+ * each option's slot counts once, then judges every series' dates against that one reading.
+ */
+export function classifyWalks(
+  occ: SpanOccupancy,
+  option: TenantServiceOption,
+  slots: Map<string, number> | null,
+  dates: string[],
+  petCount: number,
+): Map<string, WalkConflict | null> {
+  const out = new Map<string, WalkConflict | null>();
   for (const date of dates) {
-    if (walkHasConflict(date, capacity)) {
-      const covering = rows.filter((r) => r.StartDate <= date && (r.EndDate ?? r.StartDate) > date);
+    if (walkHasConflict(date, occ.capacity)) {
+      const covering = occ.rows.filter(
+        (r) => r.StartDate <= date && (r.EndDate ?? r.StartDate) > date,
+      );
       out.set(
         date,
         covering.some((r) => r.ServiceType === 'blocked')

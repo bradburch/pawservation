@@ -24,6 +24,7 @@ import {
   type OpResult,
 } from '../lib/booking-ops';
 import { endUserAuth } from '../lib/middleware';
+import { parseListRange } from '../lib/validation';
 import type { AppEnv } from '../types';
 
 /**
@@ -44,6 +45,27 @@ export function opsContext(c: Context<AppEnv>): BookingOpsContext {
         return task;
       }
     },
+  };
+}
+
+/**
+ * A list's `?from=&to=` off the query string, or the 400 `invalid_range` refusal. One reader for
+ * every list that takes a range — the booking lists and the series reads — so they refuse alike.
+ */
+export function listRange(
+  c: Context<AppEnv>,
+): { ok: true; span: { from?: string; to?: string } } | { ok: false; response: Response } {
+  const span = parseListRange(c.req.query('from'), c.req.query('to'));
+  if (span) return { ok: true, span };
+  return {
+    ok: false,
+    response: c.json(
+      {
+        error: 'from and to must be real dates (YYYY-MM-DD), with from on or before to.',
+        code: 'invalid_range',
+      },
+      400,
+    ),
   };
 }
 
@@ -233,4 +255,10 @@ export const bookingRoutes = new Hono<AppEnv>()
     respond(c, await cancelBooking(opsContext(c), { bookingId: c.req.param('id') })),
   )
 
-  .get('/:slug/bookings/mine', async (c) => respond(c, await listMyBookings(opsContext(c))));
+  // `?to=` adds every live series' projected walks through that date (capped at 24 months);
+  // without it the list is the rows alone, exactly as before series existed.
+  .get('/:slug/bookings/mine', async (c) => {
+    const range = listRange(c);
+    if (!range.ok) return range.response;
+    return respond(c, await listMyBookings(opsContext(c), range.span));
+  });

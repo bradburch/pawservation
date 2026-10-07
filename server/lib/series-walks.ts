@@ -13,8 +13,11 @@
  */
 import { addDays, type GroupRate, type MixRate, type PricedPet } from '../../src/shared/index.js';
 import {
+  listAllEndUserPetsByTenant,
+  listCapacityRows,
   listEndUserPets,
   listServiceOptions,
+  listSlotBookingCounts,
   listServices,
   listSeriesBookingDates,
   listSeriesSkips,
@@ -28,11 +31,14 @@ import {
   type OccupancyScope,
   type SeriesRow,
 } from '../db/repo';
-import type { Tenant, TenantService, TenantServiceOption } from '../types';
+import type { EndUserPet, Tenant, TenantService, TenantServiceOption } from '../types';
 import {
+  classifyWalks,
   estimateCost,
   loadPetSetRates,
+  spanOccupancy,
   walkConflictsForSpan,
+  type SpanOccupancy,
   type WalkConflict,
 } from './availability';
 import { datesIn, projectedId, projectionCap, type SkipReason } from './series-rule';
@@ -99,12 +105,76 @@ export function estCostCentsEach(walks: WalkEval[]): number | null {
   return figures.size === 1 ? [...figures][0] : null;
 }
 
+type Rates = { groupRates: GroupRate[]; mixRates: MixRate[] };
 type LoadedTerms = {
   service: TenantService;
   option: TenantServiceOption;
   pets: PricedPet[];
-  rates: { groupRates: GroupRate[]; mixRates: MixRate[] };
+  rates: Rates;
 };
+
+/**
+ * Where the terms' inputs come from. One engine call reads each once (`freshReads`); a read of
+ * many series in one request shares one memoised set (`sharedReads`), so the services, options,
+ * rates and pets are read once per request — per service for the rates, per client for the pets
+ * — however many series name them.
+ */
+type TermsReads = {
+  catalog(): Promise<{ services: TenantService[]; options: TenantServiceOption[] }>;
+  /** The client's LIVING pets, through the owner link — the booking-time ownership boundary. */
+  petsOf(endUserId: string): Promise<EndUserPet[]>;
+  ratesFor(serviceType: string): Promise<Rates>;
+};
+
+function freshReads(env: Env, tenant: Tenant): TermsReads {
+  const db = env.PAWSERVATION_DB;
+  return {
+    catalog: async () => {
+      const [services, options] = await Promise.all([
+        listServices(db, tenant.Id),
+        listServiceOptions(db, tenant.Id),
+      ]);
+      return { services, options };
+    },
+    petsOf: (endUserId) => listEndUserPets(db, tenant.Id, endUserId),
+    ratesFor: (serviceType) => loadPetSetRates(env, tenant.Id, serviceType),
+  };
+}
+
+function memo<K, V>(load: (key: K) => Promise<V>): (key: K) => Promise<V> {
+  const seen = new Map<K, Promise<V>>();
+  return (key) => {
+    let p = seen.get(key);
+    if (!p) seen.set(key, (p = load(key)));
+    return p;
+  };
+}
+
+/**
+ * One request's shared reads. `allPets` reads every living pet of the tenant ONCE, grouped by the
+ * owner LINK (`listAllEndUserPetsByTenant` names the link's owner, the same edge
+ * `listEndUserPets` joins through) — for a sitter's read across many clients; a client's own read
+ * reads her pets alone.
+ */
+function sharedReads(env: Env, tenant: Tenant, allPets: boolean): TermsReads {
+  const fresh = freshReads(env, tenant);
+  const catalog = memo(() => fresh.catalog());
+  const everyPet = memo(async () => {
+    const byOwner = new Map<string, EndUserPet[]>();
+    for (const p of await listAllEndUserPetsByTenant(env.PAWSERVATION_DB, tenant.Id)) {
+      if (p.DeceasedAt !== null) continue;
+      byOwner.set(p.EndUserId, [...(byOwner.get(p.EndUserId) ?? []), p]);
+    }
+    return byOwner;
+  });
+  return {
+    catalog: () => catalog(null),
+    petsOf: allPets
+      ? async (endUserId) => (await everyPet(null)).get(endUserId) ?? []
+      : memo((endUserId: string) => fresh.petsOf(endUserId)),
+    ratesFor: memo((serviceType: string) => fresh.ratesFor(serviceType)),
+  };
+}
 
 /**
  * The service, option, priced pets and rate rows the terms name — read live, the way
@@ -120,12 +190,11 @@ async function loadTerms(
   env: Env,
   tenant: Tenant,
   terms: SeriesTerms,
+  reads: TermsReads = freshReads(env, tenant),
 ): Promise<LoadedTerms | 'switched_off'> {
-  const db = env.PAWSERVATION_DB;
-  const [services, options, myPets] = await Promise.all([
-    listServices(db, tenant.Id),
-    listServiceOptions(db, tenant.Id),
-    listEndUserPets(db, tenant.Id, terms.endUserId),
+  const [{ services, options }, myPets] = await Promise.all([
+    reads.catalog(),
+    reads.petsOf(terms.endUserId),
   ]);
   const service = services.find((s) => s.ServiceType === terms.serviceType);
   if (!service) throw new SeriesTermsGone('service');
@@ -145,7 +214,7 @@ async function loadTerms(
     if (!p) throw new SeriesTermsGone('pet');
     pets.push({ id: p.Id, petType: p.PetType });
   }
-  const rates = await loadPetSetRates(env, tenant.Id, service.ServiceType);
+  const rates = await reads.ratesFor(service.ServiceType);
   return { service, option, pets, rates };
 }
 
@@ -175,9 +244,19 @@ async function judge(
     opts.excludeSeriesId ?? null,
     opts.scope,
   );
+  return verdicts(t, dates, opts.recorded, conflicts);
+}
+
+/** Each date's verdict: a recorded skip stands; then the price for that date; then capacity. */
+function verdicts(
+  t: LoadedTerms,
+  dates: string[],
+  recorded: Map<string, SkipReason> | undefined,
+  conflicts: Map<string, WalkConflict | null>,
+): WalkEval[] {
   return dates.map((date): WalkEval => {
-    const recorded = opts.recorded?.get(date);
-    if (recorded) return { date, skipped: recorded };
+    const skip = recorded?.get(date);
+    if (skip) return { date, skipped: skip };
     const price = estimateCost(t.service, t.option, date, date, t.pets, t.rates);
     if (!price.priced) return { date, skipped: skipReasonOf(price.reason) };
     const c = conflicts.get(date);
@@ -330,7 +409,11 @@ export async function seriesAnswers(
   tenantId: string,
   seriesId: string,
 ): Promise<Record<string, string>> {
-  const raw = await getSeriesEarliestRowAnswers(db, tenantId, seriesId);
+  return parseSeriesAnswers(await getSeriesEarliestRowAnswers(db, tenantId, seriesId));
+}
+
+/** A stored `Answers` value as the series' answers: `{}` for none or unreadable, never a throw. */
+export function parseSeriesAnswers(raw: string | null): Record<string, string> {
   if (raw === null) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -351,12 +434,100 @@ const PROJECTED_STATUS: Partial<Record<SeriesRow['Status'], ProjectedWalk['statu
   pending_client: 'offered',
 };
 
+/** What is already stored for a series: the dates that have a row (any status) and its skips. */
+export type SeriesKnown = { rowDates: Set<string>; skips: Map<string, SkipReason> };
+
+/** Project one series, inside the projector's span; `from`/`to` only ever narrow it. */
+export type SeriesProjector = (
+  series: SeriesRow,
+  terms: SeriesTerms,
+  opts?: { from?: string; to?: string; known?: SeriesKnown },
+) => Promise<ProjectedWalk[]>;
+
 /**
- * The series' walks from `from` to `to` (capped at `projectionCap(today)`, never today or earlier)
- * that have no row yet: each judged as `evaluateWalks` judges it, at today's rates, with a recorded
- * skip read rather than computed. Projection holds no capacity — each date is judged against rows
- * only, never against another projected walk — so two series projected onto one full day both
- * read as booked until the window reaches them. A series in any other status projects nothing.
+ * Projection for ONE request over ONE span — `[max(from, tomorrow), min(to, projectionCap(today))]`,
+ * bounded before anything is read, so a raw client date never reaches a query. Every series
+ * projected through it shares one reading: the services and options once, the rates once per
+ * service, the pets once per client (or once for the tenant, `allPets`), the span's blocking rows
+ * once, and each option's slot counts once. A series' own rows and skips are read per series
+ * unless the caller already holds them (`known`).
+ *
+ * Each walk is judged as `evaluateWalks` judges it, at today's rates, with a recorded skip read
+ * rather than computed. Projection holds no capacity — each date is judged against rows only,
+ * never against another projected walk — so two series projected onto one full day both read as
+ * booked until the window reaches them. A series in any status but active, pending or
+ * pending_client projects nothing; a switched-off service projects nothing (and, being computed,
+ * its walks reappear the moment she switches it back on); gone terms throw `SeriesTermsGone`.
+ */
+export function seriesProjector(
+  env: Env,
+  tenant: Tenant,
+  today: string,
+  span: { from: string; to: string },
+  opts: { allPets?: boolean } = {},
+): SeriesProjector {
+  const db = env.PAWSERVATION_DB;
+  const tomorrow = addDays(today, 1);
+  const start = span.from > tomorrow ? span.from : tomorrow;
+  const end = earlier(span.to, projectionCap(today));
+  const reads = sharedReads(env, tenant, opts.allPets ?? false);
+  const occupancy = memo(async (): Promise<SpanOccupancy> =>
+    spanOccupancy(tenant.Id, await listCapacityRows(db, tenant.Id, start, addDays(end, 1))),
+  );
+  const slots = memo(async (option: TenantServiceOption) =>
+    option.Capacity === null
+      ? null
+      : listSlotBookingCounts(
+          db,
+          tenant.Id,
+          option.ServiceType,
+          option.OptionKey,
+          start,
+          addDays(end, 1),
+        ),
+  );
+  return async (series, terms, o = {}) => {
+    const status = PROJECTED_STATUS[series.Status];
+    if (status === undefined) return [];
+    const known = o.known ?? (await readKnown(db, tenant.Id, series.Id));
+    const from = o.from !== undefined && o.from > start ? o.from : start;
+    const to = o.to !== undefined ? earlier(o.to, end) : end;
+    const dates = datesIn(terms, from, to).filter((d) => !known.rowDates.has(d));
+    if (dates.length === 0) return [];
+    const t = await loadTerms(env, tenant, terms, reads);
+    if (t === 'switched_off') return [];
+    const open = dates.filter((d) => !known.skips.has(d));
+    const conflicts =
+      open.length === 0
+        ? new Map<string, WalkConflict | null>()
+        : classifyWalks(
+            await occupancy(null),
+            t.option,
+            await slots(t.option),
+            open,
+            petCountOf(t),
+          );
+    return verdicts(t, dates, known.skips, conflicts).map((w) => ({
+      id: projectedId(series.Id, w.date),
+      date: w.date,
+      status,
+      estCostCents: 'estCostCents' in w ? w.estCostCents : null,
+      ...('skipped' in w ? { skipped: w.skipped } : {}),
+    }));
+  };
+}
+
+async function readKnown(db: D1Database, tenantId: string, seriesId: string): Promise<SeriesKnown> {
+  const [rows, skips] = await Promise.all([
+    listSeriesBookingDates(db, tenantId, seriesId),
+    listSeriesSkips(db, tenantId, seriesId),
+  ]);
+  return { rowDates: new Set(rows.keys()), skips: new Map(skips.map((s) => [s.Date, s.Reason])) };
+}
+
+/**
+ * One series' walks from `from` to `to` (capped at `projectionCap(today)`, never today or earlier)
+ * that have no row yet — `seriesProjector` for a single series.
  */
 export async function projectSeries(
   env: Env,
@@ -367,29 +538,5 @@ export async function projectSeries(
   to: string,
   today: string,
 ): Promise<ProjectedWalk[]> {
-  const status = PROJECTED_STATUS[series.Status];
-  if (status === undefined) return [];
-  const db = env.PAWSERVATION_DB;
-  const [rows, skips] = await Promise.all([
-    listSeriesBookingDates(db, tenant.Id, series.Id),
-    listSeriesSkips(db, tenant.Id, series.Id),
-  ]);
-  const recorded = new Map(skips.map((s) => [s.Date, s.Reason]));
-  const tomorrow = addDays(today, 1);
-  const start = from > tomorrow ? from : tomorrow;
-  const end = earlier(to, projectionCap(today));
-  const dates = datesIn(terms, start, end).filter((d) => !rows.has(d));
-  if (dates.length === 0) return [];
-  const t = await loadTerms(env, tenant, terms);
-  // Switched off: nothing projected, and — projection being computed — the walks reappear the
-  // moment she switches the service back on.
-  if (t === 'switched_off') return [];
-  const evals = await judge(env, tenant, t, dates, { recorded });
-  return evals.map((w) => ({
-    id: projectedId(series.Id, w.date),
-    date: w.date,
-    status,
-    estCostCents: 'estCostCents' in w ? w.estCostCents : null,
-    ...('skipped' in w ? { skipped: w.skipped } : {}),
-  }));
+  return seriesProjector(env, tenant, today, { from, to })(series, terms);
 }

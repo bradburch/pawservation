@@ -5,15 +5,20 @@ import {
   listCustomers,
   listPaymentsForTenant,
   listPetNamesForTenantBookings,
+  listSeriesPetNamesFor,
+  listSeriesSkipsFor,
+  listSeriesWithClientForTenant,
   listServices,
 } from '../db/repo';
+import { namesFromMask } from './series-rule';
 import { serializeCsvRows, type CsvValue } from './csv';
 import { formatCentsPlain } from '../../src/shared/index.js';
 
 /**
  * A SITTER MAY TAKE HER BOOK WITH HER. She can already import a client list; until this there was
- * no way back out, which is a reason not to put a client list in at all. Four files, each one the
- * plain contents of a table she already sees on screen: deceased pets, cancelled bookings and
+ * no way back out, which is a reason not to put a client list in at all. Five files, each one the
+ * plain contents of a table she already sees on screen (a repeating booking's three tables —
+ * the series, its pets, its skipped weeks — collapse into one `series` file, one row a series): deceased pets, cancelled bookings and
  * declined requests are all present, with their status in a column, because it is her record of
  * what happened.
  *
@@ -23,13 +28,13 @@ import { formatCentsPlain } from '../../src/shared/index.js';
  * her services, rates, cancellation tiers and intake question DEFINITIONS (settings, which an
  * import would have to be able to re-apply to mean anything), and the individual `BookingCharges`
  * rows, which arrive as one `Charges total` column. Widening any of that is a decision about what
- * the four files are; quietly widening the COPY that describes them is how a promise gets made
+ * the five files are; quietly widening the COPY that describes them is how a promise gets made
  * that the code does not keep, which is the defect review found here.
  *
  * Every read here goes through `server/db/repo.ts` and is therefore tenant-scoped in its own SQL;
  * this module never sees the D1 binding except to hand it on.
  */
-export const EXPORT_DATASETS = ['clients', 'pets', 'bookings', 'payments'] as const;
+export const EXPORT_DATASETS = ['clients', 'pets', 'bookings', 'series', 'payments'] as const;
 export type ExportDataset = (typeof EXPORT_DATASETS)[number];
 
 export function isExportDataset(value: string): value is ExportDataset {
@@ -204,6 +209,66 @@ async function bookingsCsv(db: D1Database, tenantId: string): Promise<CsvValue[]
   ];
 }
 
+/**
+ * One row per repeating booking, in every status (an offer she withdrew, a series that ended):
+ * its terms, its pets collapsed onto it as `petsCsv` collapses owners, and its skipped weeks as
+ * `date reason`. Its walks are already rows of the bookings file, each naming its series.
+ */
+async function seriesCsv(db: D1Database, tenantId: string): Promise<CsvValue[][]> {
+  const series = await listSeriesWithClientForTenant(db, tenantId, null);
+  const ids = series.map((s) => s.Id);
+  const [pets, skips] = await Promise.all([
+    listSeriesPetNamesFor(db, tenantId, ids),
+    listSeriesSkipsFor(db, tenantId, ids),
+  ]);
+  const petsBySeries = new Map<string, string[]>();
+  for (const p of pets)
+    petsBySeries.set(p.SeriesId, [...(petsBySeries.get(p.SeriesId) ?? []), p.Name]);
+  const skipsBySeries = new Map<string, string[]>();
+  for (const k of skips)
+    skipsBySeries.set(k.SeriesId, [
+      ...(skipsBySeries.get(k.SeriesId) ?? []),
+      `${k.Date} ${k.Reason.replace(/_/g, ' ')}`,
+    ]);
+  const day = (name: string) => name[0].toUpperCase() + name.slice(1);
+  return [
+    [
+      'Series ID',
+      'Client',
+      'Client email',
+      'Service',
+      'Option',
+      'Pets',
+      'Days',
+      'Start time',
+      'Start date',
+      'End date',
+      'Status',
+      'Requested by',
+      'Offer expires',
+      'Skipped weeks',
+      'Requested at',
+    ],
+    ...series.map((s) => [
+      s.Id,
+      clientLabel(s.CustomerName, s.CustomerEmail),
+      s.CustomerEmail,
+      s.ServiceType,
+      s.OptionKey,
+      joinNames(petsBySeries.get(s.Id) ?? []),
+      joinNames(namesFromMask(s.Weekdays).map(day)),
+      s.StartTime,
+      s.StartDate,
+      s.EndDate,
+      s.Status,
+      s.CreatedBy,
+      s.OfferExpiresAt,
+      joinNames(skipsBySeries.get(s.Id) ?? []),
+      s.CreatedAt,
+    ]),
+  ];
+}
+
 async function paymentsCsv(db: D1Database, tenantId: string): Promise<CsvValue[][]> {
   const payments = await listPaymentsForTenant(db, tenantId);
   return [
@@ -258,6 +323,8 @@ export async function buildExportCsv(
         ? await petsCsv(db, tenantId)
         : dataset === 'bookings'
           ? await bookingsCsv(db, tenantId)
-          : await paymentsCsv(db, tenantId);
+          : dataset === 'series'
+            ? await seriesCsv(db, tenantId)
+            : await paymentsCsv(db, tenantId);
   return serializeCsvRows(rows);
 }

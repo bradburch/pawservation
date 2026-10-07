@@ -122,6 +122,21 @@ export function isRealDate(value: string): boolean {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
 }
 
+/**
+ * A list's `?from=&to=` — each absent, or a real `YYYY-MM-DD`, and `from <= to` when both are
+ * given. `null` is a refusal (400 `invalid_range`); how far `to` may reach is the reader's cap,
+ * not this check's, so a far `to` is valid here and bounded where it is used.
+ */
+export function parseListRange(
+  from: string | undefined,
+  to: string | undefined,
+): { from?: string; to?: string } | null {
+  if (from !== undefined && !isRealDate(from)) return null;
+  if (to !== undefined && !isRealDate(to)) return null;
+  if (from !== undefined && to !== undefined && from > to) return null;
+  return { ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
+}
+
 export function isFutureOrToday(value: string, timezone?: string): boolean {
   return value >= getPacificDateStr(undefined, timezone);
 }

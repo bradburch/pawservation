@@ -3,7 +3,7 @@ import { adminApi } from '../shared-ui/api.js';
 import type { Session } from './shared.js';
 import { Hint } from './Hint';
 
-/** The four datasets, in the order a sitter would rebuild her business from them. */
+/** The five datasets, in the order a sitter would rebuild her business from them. */
 const DATASETS = [
   {
     key: 'clients',
@@ -21,6 +21,11 @@ const DATASETS = [
     blurb: 'Every request you have ever had, confirmed, cancelled or declined.',
   },
   {
+    key: 'series',
+    label: 'Repeating bookings',
+    blurb: 'Every repeating booking — its days, its pets, and the weeks it skipped.',
+  },
+  {
     key: 'payments',
     label: 'Payments',
     blurb: 'Every payment you have recorded, and what it settled.',
@@ -30,7 +35,7 @@ const DATASETS = [
 /**
  * DOWNLOAD YOUR OWN DATA. A sitter can already bring a client list IN; a product that offers no way
  * back out is asking her to put her whole book somewhere she cannot leave, which is the thing
- * likeliest to stop her starting at all. Four buttons, four plain CSVs, no wizard.
+ * likeliest to stop her starting at all. Five buttons, five plain CSVs, no wizard.
  *
  * A plain `<a href download>` cannot do this: the admin session is a JWT held in localStorage, so
  * the request has to carry an Authorization header, which means fetching the bytes and handing the
@@ -72,7 +77,7 @@ export function ExportPanel({ session }: { session: Session }) {
       <h3>
         Export your data
         <Hint label="Export your data">
-          Four spreadsheets you can open in Excel, Numbers or Google Sheets, or hand to whatever you
+          Five spreadsheets you can open in Excel, Numbers or Google Sheets, or hand to whatever you
           use next. Pets who have died and bookings that were cancelled or declined are in them with
           their status in a column, because they are part of your record. Downloading changes
           nothing, so take a copy whenever you like.

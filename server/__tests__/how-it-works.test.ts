@@ -391,8 +391,8 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).toContain('What if you want to take your book elsewhere?');
     expect(body.indexOf('take your book elsewhere')).toBeGreaterThan(body.indexOf('id="setup"'));
     expect(body.indexOf('take your book elsewhere')).toBeGreaterThan(body.indexOf('id="limits"'));
-    // The four datasets of EXPORT_DATASETS, and the file format buildExportCsv actually writes.
-    expect(body).toContain('Export your data gives you four downloads');
+    // The five datasets of EXPORT_DATASETS, and the file format buildExportCsv actually writes.
+    expect(body).toContain('Export your data gives you five downloads');
     expect(body).toContain('ordinary CSVs');
     // Every claim about what is IN them is a column data-export.ts really emits, including the
     // rows a tidier export would have dropped.
@@ -404,7 +404,7 @@ describe('GET /how-it-works — the tour page', () => {
     // in none of these files"). VERIFIED: listBookingsForTenant excludes ServiceType = 'blocked',
     // so time off is in no dataset. The panel said so and the marketing copy did not, which is
     // the drift that lets a sitter export before she leaves and find her calendar missing.
-    expect(body).toContain('your time off, which is in none of the four files');
+    expect(body).toContain('your time off, which is in none of the five files');
     for (const overclaim of [
       'automatic backup',
       'automatic export',

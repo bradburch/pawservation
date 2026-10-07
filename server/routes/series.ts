@@ -1,5 +1,5 @@
 /**
- * HTTP adapters for a client's own series: quote one, request one. Every rule lives in
+ * HTTP adapters for a client's own series: list hers, quote one, request one. Every rule lives in
  * `server/lib/series-ops.ts`; this file pulls the untrusted values off the wire and turns the
  * operation's result into a response, exactly as `routes/bookings.ts` does for single bookings.
  *
@@ -9,10 +9,10 @@
  */
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { quoteSeries, requestSeries, type SeriesInput } from '../lib/series-ops';
+import { listMySeries, quoteSeries, requestSeries, type SeriesInput } from '../lib/series-ops';
 import { endUserAuth } from '../lib/middleware';
 import type { AppEnv } from '../types';
-import { opsContext, respond } from './bookings';
+import { listRange, opsContext, respond } from './bookings';
 
 async function seriesInput(c: Context<AppEnv>): Promise<SeriesInput> {
   const body = await c.req
@@ -46,6 +46,13 @@ async function seriesInput(c: Context<AppEnv>): Promise<SeriesInput> {
 export const seriesRoutes = new Hono<AppEnv>()
   .use('/:slug/series', endUserAuth)
   .use('/:slug/series/*', endUserAuth)
+
+  // Her own series, every status, with their walks through the window (or `?to=`, up to 24 months).
+  .get('/:slug/series/mine', async (c) => {
+    const range = listRange(c);
+    if (!range.ok) return range.response;
+    return respond(c, await listMySeries(opsContext(c), range.span));
+  })
 
   .post('/:slug/series/quote', async (c) =>
     respond(c, await quoteSeries(opsContext(c), await seriesInput(c), { to: c.req.query('to') })),

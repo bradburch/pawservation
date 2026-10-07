@@ -27,14 +27,15 @@ import {
   insertSeriesStatement,
   listEndUserPets,
   listPetTypes,
-  listSeriesBookingRows,
-  listSeriesPetNames,
-  listSeriesSkips,
+  getSeriesWithClient,
+  listSeriesForUser,
+  listSeriesWithClientForTenant,
   listServiceOptions,
   listServices,
   replaceSavedAnswers,
   type SeriesRow,
   type SeriesStatus,
+  type SeriesWithClient,
 } from '../db/repo';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 import {
@@ -69,11 +70,20 @@ import {
   estCostCentsEach,
   evaluateWalks,
   materializeSpan,
-  projectSeries,
+  seriesProjector,
   SeriesTermsGone,
+  type SeriesProjector,
   type SeriesTerms,
   type WalkEval,
 } from './series-walks';
+import {
+  knownOf,
+  loadBundles,
+  projectOrNothing,
+  termsOf,
+  type ReadSpan,
+  type SeriesBundle,
+} from './series-reads';
 import { tenantToday } from './tenant-today';
 import {
   isRealDate,
@@ -84,6 +94,7 @@ import {
 import {
   addDays,
   validateAnswers,
+  type CancellationTier,
   validatePetTypeAcceptance,
   validateServiceConstraints,
 } from '../../src/shared/index.js';
@@ -521,12 +532,13 @@ export async function requestSeries(
   return ok(await seriesWire(env, tenant, saved, today), 201);
 }
 
-// ─── The wire ────────────────────────────────────────────────────────────────
+// ─── The wire, and reading series ────────────────────────────────────────────
 
 /**
  * One series as every read answers it, over a span — today through the window by default, `to`
- * widening it up to the 24-month cap. `walks` are its rows in the span, then its projected walks
- * for dates past where its rows stop; `skips` are its recorded skips in the span and the skips
+ * widening it up to the 24-month cap, `from` narrowing where projection starts. `walks` are its
+ * rows from today through `to` (as stored; `from` never hides one), then its projected walks for
+ * dates past where its rows stop; `skips` are its recorded skips in that span and the skips
  * projection computes. Every figure is a stored row's or `estimateCost`'s — none derived here.
  */
 export async function seriesWire(
@@ -534,44 +546,80 @@ export async function seriesWire(
   tenant: Tenant,
   row: SeriesRow,
   today: string,
-  span: { to?: string } = {},
+  span: ReadSpan = {},
 ): Promise<SeriesWire> {
+  return (await seriesWires(env, tenant, [row], today, span))[0];
+}
+
+/**
+ * `seriesWire` for a list, in a fixed number of reads: the stored rows, pets and skips of every
+ * series at once, and ONE projector for the request, so the services, options, rates and capacity
+ * are read once per service and option rather than once per series.
+ */
+export async function seriesWires(
+  env: Env,
+  tenant: Tenant,
+  seriesRows: SeriesRow[],
+  today: string,
+  span: ReadSpan = {},
+  opts: { allPets?: boolean } = {},
+): Promise<SeriesWire[]> {
+  if (seriesRows.length === 0) return [];
   const db = env.PAWSERVATION_DB;
-  const wEnd = windowEnd(today, tenant.MaxAdvanceMonths, row.EndDate);
-  const to = span.to === undefined ? wEnd : earlier(span.to, projectionCap(today));
-  const [pets, rows, recorded, services] = await Promise.all([
-    listSeriesPetNames(db, tenant.Id, row.Id),
-    listSeriesBookingRows(db, tenant.Id, row.Id),
-    listSeriesSkips(db, tenant.Id, row.Id),
+  const cap = projectionCap(today);
+  const [bundles, services] = await Promise.all([
+    loadBundles(db, tenant.Id, seriesRows),
     listServices(db, tenant.Id),
   ]);
-  const tiers = services.find((s) => s.ServiceType === row.ServiceType)?.CancellationTiers ?? null;
-  const terms: SeriesTerms = {
-    endUserId: row.EndUserId,
-    serviceType: row.ServiceType,
-    optionKey: row.OptionKey,
-    petIds: pets.map((p) => p.PetId),
-    weekdays: row.Weekdays,
-    startTime: row.StartTime,
-    startDate: row.StartDate,
-    endDate: row.EndDate,
-  };
-  const projectFrom =
+  const project = seriesProjector(
+    env,
+    tenant,
+    today,
+    {
+      from: span.from ?? today,
+      to:
+        span.to === undefined
+          ? windowEnd(today, tenant.MaxAdvanceMonths, null)
+          : earlier(span.to, cap),
+    },
+    opts,
+  );
+  return Promise.all(
+    bundles.map(async (b) => {
+      const tiers =
+        services.find((s) => s.ServiceType === b.row.ServiceType)?.CancellationTiers ?? null;
+      return wireOf(b, tiers, today, span, tenant.MaxAdvanceMonths, project);
+    }),
+  );
+}
+
+async function wireOf(
+  b: SeriesBundle,
+  tiers: CancellationTier[] | null,
+  today: string,
+  span: ReadSpan,
+  maxAdvanceMonths: number | null,
+  project: SeriesProjector,
+): Promise<SeriesWire> {
+  const { row } = b;
+  const wEnd = windowEnd(today, maxAdvanceMonths, row.EndDate);
+  const to = span.to === undefined ? wEnd : earlier(span.to, projectionCap(today));
+  const terms = termsOf(b);
+  const materialized =
     row.MaterializedThrough !== null && row.MaterializedThrough >= today
       ? addDays(row.MaterializedThrough, 1)
       : today;
-  let projected: Awaited<ReturnType<typeof projectSeries>> = [];
-  try {
-    projected = await projectSeries(env, tenant, row, terms, projectFrom, to, today);
-  } catch (e) {
-    // Terms no longer bookable (a pet, option or service gone): nothing can be projected; the
-    // rows that exist are still shown.
-    if (!(e instanceof SeriesTermsGone)) throw e;
-  }
+  const projectFrom =
+    span.from !== undefined && span.from > materialized ? span.from : materialized;
+  const projected = await projectOrNothing(project, row, terms, {
+    from: projectFrom,
+    to,
+    known: knownOf(b),
+  });
 
   const inSpan = (date: string) => date >= today && date <= to;
   const walks: SeriesWalkWire[] = [
-    ...rows
+    ...b.rows
       .filter((r) => inSpan(r.StartDate))
       .map((r): SeriesWalkWire => {
         const cancellable = isCustomerCancellable(r.Status, r.StartDate, r.EndDate, today);
@@ -604,7 +652,7 @@ export async function seriesWire(
   ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   const skipByDate = new Map<string, SkipReason>();
-  for (const s of recorded) if (inSpan(s.Date)) skipByDate.set(s.Date, s.Reason);
+  for (const s of b.skips) if (inSpan(s.Date)) skipByDate.set(s.Date, s.Reason);
   for (const p of projected)
     if (p.skipped !== undefined && !skipByDate.has(p.date)) skipByDate.set(p.date, p.skipped);
   const skips = [...skipByDate]
@@ -626,7 +674,7 @@ export async function seriesWire(
     type: row.ServiceType,
     optionKey: row.OptionKey,
     petIds: terms.petIds,
-    pets: pets.map((p) => p.Name),
+    pets: b.pets.map((p) => p.Name),
     weekdays: namesFromMask(row.Weekdays),
     startTime: row.StartTime,
     startDate: row.StartDate,
@@ -643,6 +691,57 @@ export async function seriesWire(
     walks,
     skips,
   };
+}
+
+/** The sitter's wire: the client's wire plus who the series is for. */
+export type AdminSeriesWire = SeriesWire & { endUserId: string; customerName: string | null };
+
+async function adminWires(
+  env: Env,
+  tenant: Tenant,
+  rows: SeriesWithClient[],
+  today: string,
+  span: ReadSpan,
+): Promise<AdminSeriesWire[]> {
+  const wires = await seriesWires(env, tenant, rows, today, span, { allPets: true });
+  return wires.map((w, i) => ({
+    ...w,
+    endUserId: rows[i].EndUserId,
+    customerName: rows[i].CustomerName,
+  }));
+}
+
+/** A client's own series — every status, hers only (tenant AND client in the SQL). */
+export async function listMySeries(
+  ctx: BookingOpsContext,
+  span: ReadSpan,
+): Promise<OpResult<{ series: SeriesWire[] }>> {
+  const { env, tenant, endUserId } = ctx;
+  const rows = await listSeriesForUser(env.PAWSERVATION_DB, tenant.Id, endUserId);
+  return ok({ series: await seriesWires(env, tenant, rows, tenantToday(tenant), span) });
+}
+
+/** The sitter's series, filtered to `statuses` (null = every status). */
+export async function listSitterSeries(
+  env: Env,
+  tenant: Tenant,
+  statuses: SeriesStatus[] | null,
+  span: ReadSpan,
+): Promise<OpResult<{ series: AdminSeriesWire[] }>> {
+  const rows = await listSeriesWithClientForTenant(env.PAWSERVATION_DB, tenant.Id, statuses);
+  return ok({ series: await adminWires(env, tenant, rows, tenantToday(tenant), span) });
+}
+
+/** One of the sitter's series by id; another tenant's id, or none, is the same 404. */
+export async function getSitterSeries(
+  env: Env,
+  tenant: Tenant,
+  id: string,
+  span: ReadSpan,
+): Promise<OpResult<AdminSeriesWire>> {
+  const row = await getSeriesWithClient(env.PAWSERVATION_DB, tenant.Id, id);
+  if (!row) return fail(404, 'Not found.', 'not_found');
+  return ok((await adminWires(env, tenant, [row], tenantToday(tenant), span))[0]);
 }
 
 /** The demo identity's answer: what the request would have created, with nothing behind it. */

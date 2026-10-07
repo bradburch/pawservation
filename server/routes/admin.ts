@@ -62,6 +62,7 @@ import {
   listProviderConnections,
   listServiceOptions,
   listServicePetRates,
+  listSeriesWithClientForTenant,
   listServices,
   removeEndUserPet,
   removePetOwner,
@@ -77,6 +78,7 @@ import {
   type ExpectedBooking,
   updateTenantSettings,
   upsertPetGroupRate,
+  type SeriesStatus,
 } from '../db/repo';
 import { isEmailConfigured, sendBookingStatusEmail, sendInvite } from '../lib/email';
 import { parseCsvRows } from '../lib/csv';
@@ -157,6 +159,9 @@ import {
   parseCsvColumnMapping,
 } from '../lib/payment-csv';
 import { feeToCancelTodayForList } from '../lib/booking-ops';
+import { getSitterSeries, listSitterSeries } from '../lib/series-ops';
+import { LIVE_SERIES_STATUSES, projectedListWalks } from '../lib/series-reads';
+import { listRange, respond } from './bookings';
 import { NONCE_KEY } from './oauth';
 import {
   AMOUNT_RANGE_MESSAGE,
@@ -848,6 +853,89 @@ function resolveServiceDescription(svc: ServiceBody, current: string | null): st
 function calendarWritesAllowed(env: Env, tenant: Tenant): boolean {
   if (tenant.DisabledAt) return false;
   return !planEnforceEnabled(env) || isPlanCurrent(tenant);
+}
+
+const SERIES_STATUSES: readonly SeriesStatus[] = [
+  'pending',
+  'pending_client',
+  'active',
+  'ended',
+  'declined',
+  'expired',
+];
+const isSeriesStatus = (x: string): x is SeriesStatus =>
+  (SERIES_STATUSES as readonly string[]).includes(x);
+
+/**
+ * The admin list's projected walks — `projectedListWalks` in THIS list's row shape: every key a
+ * row carries, with the same types, so a reader strict about the whole list never drops it, plus
+ * `projected: true` and, for a week that will not book, `skipped`. A projected walk has been paid
+ * nothing and charged nothing (`paidTotalCents: 0`, `charges: []`), and its fee preview follows the
+ * row rule (confirmed, priced, with a policy). Empty unless the list was asked for a range.
+ */
+async function adminProjectedRows(
+  env: Env,
+  tenant: Tenant,
+  today: string,
+  span: { from?: string; to?: string },
+  tiersByType: Map<string, CancellationTier[] | null>,
+) {
+  if (span.to === undefined) return [];
+  const series = await listSeriesWithClientForTenant(
+    env.PAWSERVATION_DB,
+    tenant.Id,
+    LIVE_SERIES_STATUSES,
+  );
+  const clients = new Map(series.map((s) => [s.Id, s]));
+  const walks = await projectedListWalks(
+    env,
+    tenant,
+    series,
+    today,
+    { ...span, to: span.to },
+    { allPets: true },
+  );
+  return walks.map(({ series: s, walk, petIds, petNames, answers }) => {
+    const tiers = tiersByType.get(s.ServiceType) ?? null;
+    return {
+      id: walk.id,
+      customerEmail: clients.get(s.Id)?.CustomerEmail ?? null,
+      customerName: clients.get(s.Id)?.CustomerName ?? null,
+      type: s.ServiceType,
+      startDate: walk.date,
+      endDate: null,
+      startTime: s.StartTime,
+      departureTime: null,
+      optionKey: s.OptionKey,
+      petCount: Math.max(petIds.length, 1),
+      petNames,
+      external: false,
+      externalSummary: null,
+      isBackfilled: false,
+      answers,
+      estCostCents: walk.estCostCents,
+      paidTotalCents: 0,
+      charges: [],
+      chargesTotalCents: 0,
+      status: walk.status,
+      cancellationFeeCents: null,
+      feeIfCancelledTodayCents:
+        walk.status === 'confirmed' && walk.estCostCents !== null && tiers
+          ? feeToCancelTodayForList(
+              walk.id,
+              walk.status,
+              walk.estCostCents,
+              walk.date,
+              tiers,
+              today,
+            )
+          : null,
+      createdAt: s.CreatedAt,
+      seriesId: s.Id,
+      projected: true as const,
+      ...(walk.skipped !== undefined ? { skipped: walk.skipped } : {}),
+    };
+  });
 }
 
 export const adminRoutes = new Hono<AppEnv>()
@@ -2680,8 +2768,12 @@ export const adminRoutes = new Hono<AppEnv>()
     });
   })
 
+  // `?to=` adds every live series' projected walks through that date (capped at 24 months), in
+  // this list's own row shape; without it the list is the rows alone, exactly as before series.
   .get('/:slug/admin/bookings', async (c) => {
     const tenant = c.get('tenant');
+    const range = listRange(c);
+    if (!range.ok) return range.response;
     // A disabled tenant is read-only: don't run the calendar self-heal (a write) on this GET. And
     // neither is a business whose plan has lapsed, while the deployment enforces — see
     // `calendarWritesAllowed`.
@@ -2716,59 +2808,84 @@ export const adminRoutes = new Hono<AppEnv>()
       petNamesByBooking.set(pr.BookingRequestId, list);
     }
     return c.json({
-      bookings: rows.map((r) => ({
-        id: r.Id,
-        customerEmail: r.Email,
-        customerName: r.Name,
-        type: r.ServiceType,
-        startDate: r.StartDate,
-        endDate: r.EndDate,
-        startTime: r.StartTime,
-        departureTime: r.DepartureTime,
-        optionKey: r.OptionKey,
-        petCount: r.PetCount,
-        petNames: petNamesByBooking.get(r.Id) ?? [],
-        external: r.ServiceType === 'external',
-        externalSummary: r.ExternalSummary,
-        // What the design doc names as the flag the UI reads to label a cost as an estimate
-        // rather than a client-agreed price (docs/superpowers/specs/2026-08-09-calendar-backfill-
-        // design.md) — the same restriction the PATCH .../cost route enforces server-side.
-        isBackfilled: r.Source === 'calendar-backfill',
-        answers: r.Answers,
-        // Every money figure here is INTEGER CENTS and says so in its name (0015). Nothing is
-        // divided on the way out and nothing is summed across units: the totals are sums of cents.
-        estCostCents: r.EstCost,
-        paidTotalCents: r.PaidTotal ?? 0,
-        charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
-          id: ch.Id,
-          label: ch.Label,
-          amountCents: ch.Amount,
+      bookings: [
+        ...rows.map((r) => ({
+          id: r.Id,
+          customerEmail: r.Email,
+          customerName: r.Name,
+          type: r.ServiceType,
+          startDate: r.StartDate,
+          endDate: r.EndDate,
+          startTime: r.StartTime,
+          departureTime: r.DepartureTime,
+          optionKey: r.OptionKey,
+          petCount: r.PetCount,
+          petNames: petNamesByBooking.get(r.Id) ?? [],
+          external: r.ServiceType === 'external',
+          externalSummary: r.ExternalSummary,
+          // What the design doc names as the flag the UI reads to label a cost as an estimate
+          // rather than a client-agreed price (docs/superpowers/specs/2026-08-09-calendar-backfill-
+          // design.md) — the same restriction the PATCH .../cost route enforces server-side.
+          isBackfilled: r.Source === 'calendar-backfill',
+          answers: r.Answers,
+          // Every money figure here is INTEGER CENTS and says so in its name (0015). Nothing is
+          // divided on the way out and nothing is summed across units: the totals are sums of cents.
+          estCostCents: r.EstCost,
+          paidTotalCents: r.PaidTotal ?? 0,
+          charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
+            id: ch.Id,
+            label: ch.Label,
+            amountCents: ch.Amount,
+          })),
+          chargesTotalCents: (chargesByBooking.get(r.Id) ?? []).reduce(
+            (sum, ch) => sum + ch.Amount,
+            0,
+          ),
+          status: r.Status,
+          cancellationFeeCents: r.CancellationFee,
+          // Through the list-safe wrapper: `cancellationFee` throws on a cost that is not a whole
+          // number of dollars, and one such row must not 500 the sitter's whole bookings list. The
+          // guard around it is unchanged — a row that is not confirmed, has no cost, or has no
+          // tiers has never had a preview, and still reports null.
+          feeIfCancelledTodayCents:
+            r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)
+              ? feeToCancelTodayForList(
+                  r.Id,
+                  r.Status,
+                  r.EstCost,
+                  r.StartDate,
+                  tiersByType.get(r.ServiceType)!,
+                  today,
+                )
+              : null,
+          createdAt: r.CreatedAt,
+          seriesId: r.SeriesId ?? null,
         })),
-        chargesTotalCents: (chargesByBooking.get(r.Id) ?? []).reduce(
-          (sum, ch) => sum + ch.Amount,
-          0,
-        ),
-        status: r.Status,
-        cancellationFeeCents: r.CancellationFee,
-        // Through the list-safe wrapper: `cancellationFee` throws on a cost that is not a whole
-        // number of dollars, and one such row must not 500 the sitter's whole bookings list. The
-        // guard around it is unchanged — a row that is not confirmed, has no cost, or has no
-        // tiers has never had a preview, and still reports null.
-        feeIfCancelledTodayCents:
-          r.Status === 'confirmed' && r.EstCost != null && tiersByType.get(r.ServiceType)
-            ? feeToCancelTodayForList(
-                r.Id,
-                r.Status,
-                r.EstCost,
-                r.StartDate,
-                tiersByType.get(r.ServiceType)!,
-                today,
-              )
-            : null,
-        createdAt: r.CreatedAt,
-        seriesId: r.SeriesId ?? null,
-      })),
+        ...(await adminProjectedRows(c.env, tenant, today, range.span, tiersByType)),
+      ],
     });
+  })
+
+  // The sitter's series, `?status=a,b` (none named = every status), each with its walks through
+  // the window or `?to=` (up to 24 months). An unknown status is refused, never ignored.
+  .get('/:slug/admin/series', async (c) => {
+    const range = listRange(c);
+    if (!range.ok) return range.response;
+    const raw = c.req.query('status');
+    const statuses = raw === undefined || raw === '' ? null : raw.split(',').map((x) => x.trim());
+    if (statuses !== null && !statuses.every(isSeriesStatus))
+      return c.json(
+        { error: `status must be any of ${SERIES_STATUSES.join(', ')}.`, code: 'invalid_status' },
+        400,
+      );
+    return respond(c, await listSitterSeries(c.env, c.get('tenant'), statuses, range.span));
+  })
+
+  // One series by id. Another sitter's id, or an unknown one, is the same 404.
+  .get('/:slug/admin/series/:id', async (c) => {
+    const range = listRange(c);
+    if (!range.ok) return range.response;
+    return respond(c, await getSitterSeries(c.env, c.get('tenant'), c.req.param('id'), range.span));
   })
 
   // `planExempt` (lib/middleware.ts): a lapsed business may still ANSWER a request. Her clients
@@ -4445,10 +4562,10 @@ export const adminRoutes = new Hono<AppEnv>()
   })
 
   /**
-   * TAKE YOUR BOOK WITH YOU. One route family rather than four sibling routes: the four datasets
+   * TAKE YOUR BOOK WITH YOU. One route family rather than five sibling routes: the five datasets
    * differ only in which rows they name, so a `:dataset` param keeps the auth, the tenant scoping,
    * the headers and the filename in ONE place — an export that forgot its Content-Disposition, or
-   * worse its tenant, could only ever be the fifth one somebody added beside the others.
+   * worse its tenant, could only ever be the sixth one somebody added beside the others.
    *
    * It sits under this app's single `.use('/:slug/admin/*', adminAuth)`, so an unauthenticated
    * caller never reaches the handler, and every read `buildExportCsv` dispatches to carries

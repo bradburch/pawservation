@@ -1335,7 +1335,7 @@ export const adminApi = {
   exportCsv: async (
     slug: string,
     token: string,
-    dataset: 'clients' | 'pets' | 'bookings' | 'payments',
+    dataset: 'clients' | 'pets' | 'bookings' | 'series' | 'payments',
   ): Promise<{ blob: Blob; filename: string }> => {
     const res = await fetch(`/api/${slug}/admin/export/${dataset}`, {
       headers: authHeaders(token),

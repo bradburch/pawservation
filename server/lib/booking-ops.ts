@@ -55,6 +55,7 @@ import {
   listPetTypes,
   listSavedAnswers,
   listServiceOptions,
+  listSeriesForUser,
   listServices,
   replaceBookingPets,
   replaceExtraTimeCharges,
@@ -84,6 +85,8 @@ import { DEMO_EMAIL } from './demo';
 import { phoneOnFile, validatePhone } from './phone';
 import { isUniqueViolation } from './db-errors';
 import { tenantToday } from './tenant-today';
+import { projectedListWalks, type ListedProjection, type ReadSpan } from './series-reads';
+import type { SkipReason } from './series-rule';
 import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './booking-times';
 import {
   isValidPetCount,
@@ -1526,6 +1529,10 @@ export type MyBooking = {
   status: string;
   /** The series this booking belongs to (0019_booking_series); null = a single booking. */
   seriesId: string | null;
+  /** Only on a walk projected past the rows, and only when the list was asked for a range. */
+  projected?: true;
+  /** Why a projected week will not book — never alongside a figure. */
+  skipped?: SkipReason;
 };
 
 function parseAnswers(raw: string, bookingId: string): Record<string, string> {
@@ -1547,6 +1554,7 @@ function parseAnswers(raw: string, bookingId: string): Record<string, string> {
 
 export async function listMyBookings(
   ctx: BookingOpsContext,
+  span: ReadSpan = {},
 ): Promise<OpResult<{ bookings: MyBooking[] }>> {
   const { env, tenant, endUserId } = ctx;
   const rows = await listBookingsForUser(env.PAWSERVATION_DB, tenant.Id, endUserId);
@@ -1574,64 +1582,118 @@ export async function listMyBookings(
       s.CancellationTiers,
     ]),
   );
-  const today = getPacificDateStr(new Date(), tenant.Timezone ?? DEFAULT_TIMEZONE);
+  const today = tenantToday(tenant);
+  const projected =
+    span.to === undefined
+      ? []
+      : await projectedListWalks(
+          env,
+          tenant,
+          await listSeriesForUser(env.PAWSERVATION_DB, tenant.Id, endUserId),
+          today,
+          { ...span, to: span.to },
+        );
   return ok({
-    bookings: rows.map((r) => {
-      const cancellable = isCustomerCancellable(r.Status, r.StartDate, r.EndDate, today);
-      const mine = petsByBooking.get(r.Id) ?? [];
-      return {
-        id: r.Id,
-        type: r.ServiceType,
-        startDate: r.StartDate,
-        endDate: r.EndDate,
-        /** The stored arrival time — what the edit form must open showing. */
-        startTime: r.StartTime,
-        /** The stored departure time (0008), for the same reason. */
-        departureTime: r.DepartureTime,
-        /** Which priced option (walk length, check-in slot) this booking is on. An edit never
-         *  changes it — it is here so the edit form paints the grid against the RIGHT option's
-         *  capacity instead of falling back to the service's first one. */
-        optionKey: r.OptionKey,
-        /** The pet IDS on the booking, so an edit form can pre-select them instead of guessing
-         *  from display names. The names stay in `pets`. */
-        petIds: mine.map((p) => p.id),
-        petCount: r.PetCount,
-        pets: mine.map((p) => p.name),
-        /** What was answered ON THIS BOOKING — not the saved pre-fill, which may since have
-         *  moved on. `{}` for none or unparseable, the same defensive read the admin list uses. */
-        answers: parseAnswers(r.Answers, r.Id),
-        // Stored cents (0015) straight out onto a wire that now says so — no division anywhere on
-        // this payload, so nothing here can round, throw, or drift from the stored figure.
-        estCostCents: r.EstCost,
-        charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
-          label: ch.label,
-          amountCents: ch.amount,
-        })),
-        chargesTotalCents: (chargesByBooking.get(r.Id) ?? []).reduce(
-          (sum, ch) => sum + ch.amount,
-          0,
-        ),
-        cancellationFeeCents: r.CancellationFee,
-        /** Whether THIS customer may still cancel it — the server's answer, not a client rule. */
-        cancellable,
-        /** Whether THIS customer may still change it — see `isCustomerEditable`. */
-        editable: isCustomerEditable(r.Status, r.StartDate, today),
-        /** What cancelling today would cost, in CENTS; null when it isn't cancellable. */
-        feeIfCancelledTodayCents: cancellable
-          ? feeToCancelTodayForList(
-              r.Id,
-              r.Status,
-              r.EstCost,
-              r.StartDate,
-              tiersByType.get(r.ServiceType) ?? null,
-              today,
-            )
-          : null,
-        status: r.Status,
-        seriesId: r.SeriesId ?? null,
-      };
-    }),
+    bookings: [...rows.map((r) => myBookingRow(r)), ...projected.map((p) => myProjectedRow(p))],
   });
+
+  function myBookingRow(r: (typeof rows)[number]): MyBooking {
+    const cancellable = isCustomerCancellable(r.Status, r.StartDate, r.EndDate, today);
+    const mine = petsByBooking.get(r.Id) ?? [];
+    return {
+      id: r.Id,
+      type: r.ServiceType,
+      startDate: r.StartDate,
+      endDate: r.EndDate,
+      /** The stored arrival time — what the edit form must open showing. */
+      startTime: r.StartTime,
+      /** The stored departure time (0008), for the same reason. */
+      departureTime: r.DepartureTime,
+      /** Which priced option (walk length, check-in slot) this booking is on. An edit never
+       *  changes it — it is here so the edit form paints the grid against the RIGHT option's
+       *  capacity instead of falling back to the service's first one. */
+      optionKey: r.OptionKey,
+      /** The pet IDS on the booking, so an edit form can pre-select them instead of guessing
+       *  from display names. The names stay in `pets`. */
+      petIds: mine.map((p) => p.id),
+      petCount: r.PetCount,
+      pets: mine.map((p) => p.name),
+      /** What was answered ON THIS BOOKING — not the saved pre-fill, which may since have
+       *  moved on. `{}` for none or unparseable, the same defensive read the admin list uses. */
+      answers: parseAnswers(r.Answers, r.Id),
+      // Stored cents (0015) straight out onto a wire that now says so — no division anywhere on
+      // this payload, so nothing here can round, throw, or drift from the stored figure.
+      estCostCents: r.EstCost,
+      charges: (chargesByBooking.get(r.Id) ?? []).map((ch) => ({
+        label: ch.label,
+        amountCents: ch.amount,
+      })),
+      chargesTotalCents: (chargesByBooking.get(r.Id) ?? []).reduce((sum, ch) => sum + ch.amount, 0),
+      cancellationFeeCents: r.CancellationFee,
+      /** Whether THIS customer may still cancel it — the server's answer, not a client rule. */
+      cancellable,
+      /** Whether THIS customer may still change it — see `isCustomerEditable`. */
+      editable: isCustomerEditable(r.Status, r.StartDate, today),
+      /** What cancelling today would cost, in CENTS; null when it isn't cancellable. */
+      feeIfCancelledTodayCents: cancellable
+        ? feeToCancelTodayForList(
+            r.Id,
+            r.Status,
+            r.EstCost,
+            r.StartDate,
+            tiersByType.get(r.ServiceType) ?? null,
+            today,
+          )
+        : null,
+      status: r.Status,
+      seriesId: r.SeriesId ?? null,
+    };
+  }
+
+  /**
+   * A projected walk in the list's own row shape — every key a row carries, with the same types,
+   * so a reader strict about the whole list never drops it — plus `projected: true` and, for a
+   * week that will not book, `skipped` (and no figure). Nothing to pay, charge or edit; an offer
+   * is not hers to cancel until she accepts it, and a skipped week has nothing to cancel.
+   */
+  function myProjectedRow({
+    series,
+    walk,
+    petIds,
+    petNames,
+    answers,
+  }: ListedProjection): MyBooking {
+    const tiers = tiersByType.get(series.ServiceType) ?? null;
+    const owed = walk.skipped === undefined && walk.status !== 'offered' ? walk.status : null;
+    const cancellable = owed !== null && isCustomerCancellable(owed, walk.date, null, today);
+    return {
+      id: walk.id,
+      type: series.ServiceType,
+      startDate: walk.date,
+      endDate: null,
+      startTime: series.StartTime,
+      departureTime: null,
+      optionKey: series.OptionKey,
+      petIds,
+      petCount: Math.max(petIds.length, 1),
+      pets: petNames,
+      answers,
+      estCostCents: walk.estCostCents,
+      charges: [],
+      chargesTotalCents: 0,
+      cancellationFeeCents: null,
+      cancellable,
+      editable: false,
+      feeIfCancelledTodayCents:
+        cancellable && owed !== null
+          ? feeToCancelTodayForList(walk.id, owed, walk.estCostCents, walk.date, tiers, today)
+          : null,
+      status: walk.status,
+      seriesId: series.Id,
+      projected: true,
+      ...(walk.skipped !== undefined ? { skipped: walk.skipped } : {}),
+    };
+  }
 }
 
 // ─── The customer's own account balance ──────────────────────────────────────

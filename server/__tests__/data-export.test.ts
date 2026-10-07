@@ -20,7 +20,7 @@ import { adminHeaders, createTestEnv, TENANT_A, TENANT_B } from './helpers';
  * hand a spreadsheet a formula that a client typed into a name or a note.
  */
 
-const DATASETS = ['clients', 'pets', 'bookings', 'payments'] as const;
+const DATASETS = ['clients', 'pets', 'bookings', 'series', 'payments'] as const;
 
 const get = async (env: Env, dataset: string, tenantId = TENANT_A, slug = 'sunny-paws') =>
   app.request(
@@ -482,6 +482,76 @@ describe('admin data export route', () => {
     const byId = new Map(rows.slice(1).map((r) => [r[0], r]));
     expect(byId.get(walk)![seriesIndex]).toBe('series_1');
     expect(byId.get('seed_sp_board1')![seriesIndex]).toBe('');
+  });
+
+  it('exports every series — its terms, its pets and its skipped weeks — one row each, this tenant only', async () => {
+    const { env, raw } = createTestEnv();
+    const insert = raw.prepare(
+      `INSERT INTO BookingSeries (Id, TenantId, EndUserId, ServiceType, OptionKey, Weekdays, StartTime,
+         StartDate, EndDate, Status, CreatedBy, OfferExpiresAt, CreatedAt, UpdatedAt)
+       VALUES (?, ?, ?, 'walk', 'd30', 10, ?, '2030-01-01', ?, ?, ?, ?, '2029-12-01 10:00:00', 'x')`,
+    );
+    insert.run('series_sp', TENANT_A, 'eu_sp_jess', '09:00', null, 'active', 'client', null);
+    insert.run(
+      'series_sp_offer',
+      TENANT_A,
+      'eu_sp_jess',
+      null,
+      '2030-06-30',
+      'declined',
+      'sitter',
+      '2029-12-08',
+    );
+    insert.run('series_ht', TENANT_B, 'eu_ht_jess', null, null, 'active', 'client', null);
+    raw
+      .prepare(`INSERT INTO BookingSeriesPets (SeriesId, PetId) VALUES (?, ?)`)
+      .run('series_sp', 'pet_sp_bella');
+    raw
+      .prepare(`INSERT INTO BookingSeriesPets (SeriesId, PetId) VALUES (?, ?)`)
+      .run('series_sp', 'pet_sp_mochi');
+    raw
+      .prepare(`INSERT INTO BookingSeriesPets (SeriesId, PetId) VALUES (?, ?)`)
+      .run('series_ht', 'pet_ht_otis');
+    const skip = raw.prepare(
+      `INSERT INTO BookingSeriesSkips (SeriesId, TenantId, Date, Reason, CreatedAt) VALUES (?, ?, ?, ?, 'x')`,
+    );
+    skip.run('series_sp', TENANT_A, '2030-01-08', 'time_off');
+    skip.run('series_sp', TENANT_A, '2030-01-10', 'full');
+    skip.run('series_ht', TENANT_B, '2030-01-08', 'paused');
+
+    const rows = await rowsOf(await get(env, 'series'));
+    const header = rows[0];
+    const col = (name: string) => {
+      expect(header, name).toContain(name);
+      return header.indexOf(name);
+    };
+    const byId = new Map(rows.slice(1).map((r) => [r[col('Series ID')], r]));
+    expect([...byId.keys()].sort()).toEqual(['series_sp', 'series_sp_offer']);
+    const sp = byId.get('series_sp')!;
+    expect(sp[col('Client')]).toBe('Jess Demo');
+    expect(sp[col('Client email')]).toBe('jess@example.com');
+    expect(sp[col('Service')]).toBe('walk');
+    expect(sp[col('Option')]).toBe('d30');
+    expect(sp[col('Pets')]).toBe('Bella; Mochi');
+    expect(sp[col('Days')]).toBe('Tuesday; Thursday');
+    expect(sp[col('Start time')]).toBe('09:00');
+    expect(sp[col('Start date')]).toBe('2030-01-01');
+    expect(sp[col('End date')]).toBe('');
+    expect(sp[col('Status')]).toBe('active');
+    expect(sp[col('Requested by')]).toBe('client');
+    expect(sp[col('Skipped weeks')]).toBe('2030-01-08 time off; 2030-01-10 full');
+    expect(sp[col('Requested at')]).toBe('2029-12-01 10:00:00');
+    const offer = byId.get('series_sp_offer')!;
+    expect(offer[col('Status')]).toBe('declined');
+    expect(offer[col('Requested by')]).toBe('sitter');
+    expect(offer[col('Offer expires')]).toBe('2029-12-08');
+    expect(offer[col('End date')]).toBe('2030-06-30');
+    expect(offer[col('Pets')]).toBe('');
+
+    const other = cellsOf(await rowsOf(await get(env, 'series', TENANT_B, 'happy-tails')));
+    expect(other).toContain('series_ht');
+    expect(other).toContain('Otis');
+    expect(other.some((cell) => cell.includes('series_sp') || cell.includes('Bella'))).toBe(false);
   });
 
   it('names the person behind a household payment, once, even when the pet is co-owned', async () => {

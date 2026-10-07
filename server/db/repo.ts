@@ -1633,6 +1633,124 @@ export async function listSeriesPetNames(
   return results;
 }
 
+// ─── Series reads for many series at once (one request reading a list) ──────
+//
+// A list of series is read in a fixed number of queries, never one per series: the ids go in
+// chunks well under D1's bound-parameter limit, each chunk one tenant-scoped statement.
+
+const SERIES_ID_CHUNK = 50;
+
+async function forSeriesChunks<T>(
+  seriesIds: string[],
+  read: (ids: string[], marks: string) => Promise<T[]>,
+): Promise<T[]> {
+  const ids = [...new Set(seriesIds)];
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += SERIES_ID_CHUNK) {
+    const chunk = ids.slice(i, i + SERIES_ID_CHUNK);
+    out.push(...(await read(chunk, chunk.map(() => '?').join(', '))));
+  }
+  return out;
+}
+
+/** Series of the tenant with the client's name and email joined in (null for a client since
+ *  removed); every status when `statuses` is null. */
+export type SeriesWithClient = SeriesRow & {
+  CustomerEmail: string | null;
+  CustomerName: string | null;
+};
+
+const SERIES_WITH_CLIENT_SELECT = `SELECT ${SERIES_COLS.split(', ')
+  .map((c) => `s.${c}`)
+  .join(', ')}, u.Email AS CustomerEmail, u.Name AS CustomerName
+  FROM BookingSeries s
+  LEFT JOIN EndUsers u ON u.Id = s.EndUserId AND u.TenantId = s.TenantId`;
+
+export async function listSeriesWithClientForTenant(
+  db: D1Database,
+  tenantId: string,
+  statuses: SeriesStatus[] | null,
+): Promise<SeriesWithClient[]> {
+  if (statuses !== null && statuses.length === 0) return [];
+  const filter =
+    statuses === null ? '' : ` AND s.Status IN (${statuses.map(() => '?').join(', ')})`;
+  const { results } = await db
+    .prepare(
+      `${SERIES_WITH_CLIENT_SELECT} WHERE s.TenantId = ?${filter} ORDER BY s.StartDate, s.Id`,
+    )
+    .bind(tenantId, ...(statuses ?? []))
+    .all<SeriesWithClient>();
+  return results;
+}
+
+export async function getSeriesWithClient(
+  db: D1Database,
+  tenantId: string,
+  id: string,
+): Promise<SeriesWithClient | null> {
+  return await db
+    .prepare(`${SERIES_WITH_CLIENT_SELECT} WHERE s.TenantId = ? AND s.Id = ?`)
+    .bind(tenantId, id)
+    .first<SeriesWithClient>();
+}
+
+/** The pets of each series named, deceased ones included (see `listSeriesPetNames`). */
+export async function listSeriesPetNamesFor(
+  db: D1Database,
+  tenantId: string,
+  seriesIds: string[],
+): Promise<{ SeriesId: string; PetId: string; Name: string }[]> {
+  return forSeriesChunks(seriesIds, async (ids, marks) => {
+    const { results } = await db
+      .prepare(
+        `SELECT bsp.SeriesId, p.Id AS PetId, p.Name FROM BookingSeriesPets bsp
+           JOIN BookingSeries s ON s.Id = bsp.SeriesId
+           JOIN EndUserPets p ON p.Id = bsp.PetId AND p.TenantId = s.TenantId
+          WHERE s.TenantId = ? AND bsp.SeriesId IN (${marks})
+          ORDER BY bsp.SeriesId, bsp.PetId`,
+      )
+      .bind(tenantId, ...ids)
+      .all<{ SeriesId: string; PetId: string; Name: string }>();
+    return results;
+  });
+}
+
+/** Every row of each series named, in any status, by date — with its stored intake answers. */
+export async function listSeriesBookingRowsFor(
+  db: D1Database,
+  tenantId: string,
+  seriesIds: string[],
+): Promise<(BookingRow & { SeriesId: string; Answers: string })[]> {
+  return forSeriesChunks(seriesIds, async (ids, marks) => {
+    const { results } = await db
+      .prepare(
+        `SELECT ${BOOKING_COLS}, Answers FROM BookingRequests
+          WHERE TenantId = ? AND SeriesId IN (${marks}) ORDER BY StartDate, Id`,
+      )
+      .bind(tenantId, ...ids)
+      .all<BookingRow & { SeriesId: string; Answers: string }>();
+    return results;
+  });
+}
+
+/** Every recorded skip of each series named, by date. */
+export async function listSeriesSkipsFor(
+  db: D1Database,
+  tenantId: string,
+  seriesIds: string[],
+): Promise<SeriesSkipRow[]> {
+  return forSeriesChunks(seriesIds, async (ids, marks) => {
+    const { results } = await db
+      .prepare(
+        `SELECT SeriesId, Date, Reason FROM BookingSeriesSkips
+          WHERE TenantId = ? AND SeriesId IN (${marks}) ORDER BY SeriesId, Date`,
+      )
+      .bind(tenantId, ...ids)
+      .all<SeriesSkipRow>();
+    return results;
+  });
+}
+
 /**
  * The raw `Answers` of a series' earliest row — the intake answers given when it was requested,
  * which every walk it adds later carries too (a series has no column of its own for them). Null

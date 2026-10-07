@@ -105,7 +105,7 @@ describe('GET / — landing page', () => {
       'back into pawservation',
     ])
       expect(body.toLowerCase(), overclaim).not.toContain(overclaim);
-    // The guarantee moved rather than went: the tour still names the four datasets of
+    // The guarantee moved rather than went: the tour still names the five datasets of
     // EXPORT_DATASETS, says where the panel lives, and states the two limits a reader deciding on
     // lock-in would otherwise find out the hard way.
     const { env } = createTestEnv();
@@ -113,13 +113,13 @@ describe('GET / — landing page', () => {
     const askedAt = tour.indexOf('What if you want to take your book elsewhere?');
     expect(askedAt).toBeGreaterThan(-1);
     const answer = tour.slice(askedAt, tour.indexOf('</section>', askedAt)).toLowerCase();
-    expect(answer).toContain('export your data gives you four downloads');
-    for (const dataset of ['clients', 'pets', 'bookings', 'payments'])
+    expect(answer).toContain('export your data gives you five downloads');
+    for (const dataset of ['clients', 'pets', 'bookings', 'repeating bookings', 'payments'])
       expect(answer, dataset).toContain(dataset);
     // …and the same SCOPE the in-app panel states (app/admin/ExportPanel.tsx: "blocked days are
     // in none of these files"). VERIFIED: listBookingsForTenant excludes ServiceType = 'blocked',
     // so no dataset carries time off.
-    expect(answer).toContain('your time off, which is in none of the four files');
+    expect(answer).toContain('your time off, which is in none of the five files');
     // …and the two limits out loud: it runs when she presses the button, nothing reads a file back.
     expect(answer).toContain('nothing scheduled to set up');
     expect(answer).toContain('no way to load one of these files back in');
