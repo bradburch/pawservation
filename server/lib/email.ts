@@ -286,6 +286,57 @@ export async function sendCancellationNoticeToSitter(
   });
 }
 
+export type SeriesRequestNotice = {
+  displayName: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  serviceLabel: string;
+  /** `patternWords` of the series — "every Tuesday and Thursday from 13 Oct, no end date". */
+  patternText: string;
+  petNames: string[];
+};
+
+/**
+ * Tell the SITTER a client asked for a repeating booking. Booking mail (RESEND_FROM_BOOKING).
+ * Deliberately carries NO figure: each walk is priced for its own date (a holiday walk costs what
+ * her holiday rate says), so a single number here would be one she never stated — the request in
+ * the dashboard lists every date with its own price. Throws if email is not configured or Resend
+ * rejects; callers treat it as best-effort, since the series is already written.
+ */
+export async function sendSeriesRequestToSitter(
+  env: Env,
+  to: string,
+  n: SeriesRequestNotice,
+): Promise<void> {
+  if (!isEmailConfigured(env)) throw new Error('Email is not configured.');
+  // Names, labels and the pattern are tenant- or user-controlled → escaped in every HTML slot.
+  const who = n.customerName?.trim() || n.customerEmail || 'A client';
+  const headline = `${who} asked for a repeating ${n.serviceLabel}.`;
+  const detail = [
+    `Service: ${n.serviceLabel}`,
+    `When: ${n.patternText}`,
+    `Pets: ${n.petNames.join(', ')}`,
+    ...(n.customerEmail ? [`Client: ${n.customerEmail}`] : []),
+  ];
+  const priceLine =
+    'Each walk is priced for its own date — every date and its price is listed on the request.';
+  const action = 'Open Pawservation to confirm or decline the whole series.';
+  await resendPost(env, env.RESEND_FROM_BOOKING!, {
+    to,
+    subject: `Repeating request: ${n.serviceLabel} for ${who}`,
+    text: `${headline}\n\n${detail.join('\n')}\n\n${priceLine}\n\n${action}`,
+    html: emailShell(
+      `<p style="margin:0 0 8px;">${htmlEscape(headline)}</p>` +
+        `<p style="margin:12px 0;color:${EMAIL_INK};">` +
+        detail.map((line) => htmlEscape(line)).join('<br />') +
+        `</p>` +
+        `<p style="margin:12px 0 0;">${htmlEscape(priceLine)}</p>` +
+        `<p style="margin:12px 0 0;">${htmlEscape(action)}</p>`,
+      `Sent by Pawservation on behalf of ${n.displayName}`,
+    ),
+  });
+}
+
 /** Send a booking invite (on-demand customer welcome). Throws if email is not configured or Resend rejects the request. */
 export async function sendInvite(
   env: Env,

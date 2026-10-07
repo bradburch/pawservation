@@ -49,6 +49,7 @@ import { extraTimeSurcharges, isTimesError, resolveBookingTimes } from './bookin
 import { isUniqueViolation } from './db-errors';
 import { DEMO_EMAIL } from './demo';
 import { phoneOnFile } from './phone';
+import { isEmailConfigured, sendSeriesRequestToSitter } from './email';
 import { savedAnswerEntries } from './saved-answers';
 import {
   datesIn,
@@ -431,7 +432,7 @@ export async function requestSeries(
     if (isFailure(evals)) return evals;
     const refused = nothingBooks(evals, tenant);
     if (refused) return refused;
-    return ok(demoWire(v, wEnd, evals), 201);
+    return ok(demoWire(v, today, wEnd, evals), 201);
   }
 
   if (!requester) return fail(404, 'Not found.', 'unknown_customer');
@@ -493,6 +494,26 @@ export async function requestSeries(
   ).catch((err) => {
     console.error('saving intake answers failed', err);
   });
+  // Tell the sitter, at her contact address — best-effort, as the single booking's notices are:
+  // the series is written and the client is about to be told so. No address set → no email.
+  // Never reached by the demo arm or a replay, which both return above.
+  const notify = (async () => {
+    const to = tenant.ContactEmail?.trim();
+    if (!isEmailConfigured(env) || !to) return;
+    await sendSeriesRequestToSitter(env, to, {
+      displayName: tenant.DisplayName,
+      customerName: requester.Name ?? null,
+      customerEmail: requester.Email ?? null,
+      serviceLabel: v.service.Label,
+      patternText: patternWords(terms),
+      petNames: v.petNames,
+    });
+  })().catch((err) => {
+    console.error('series request notice to sitter failed', err);
+  });
+  if (ctx.defer) await ctx.defer(notify);
+  else await notify;
+
   const saved = await getSeries(db, tenant.Id, series.Id);
   if (!saved) throw new Error('series vanished after its own write');
   return ok(await seriesWire(env, tenant, saved, today), 201);
@@ -623,7 +644,7 @@ export async function seriesWire(
 }
 
 /** The demo identity's answer: what the request would have created, with nothing behind it. */
-function demoWire(v: ValidSeries, wEnd: string, evals: WalkEval[]): SeriesWire {
+function demoWire(v: ValidSeries, today: string, wEnd: string, evals: WalkEval[]): SeriesWire {
   const id = 'demo-series';
   const shown = evals.filter((w) => w.date <= wEnd);
   return {
@@ -653,7 +674,15 @@ function demoWire(v: ValidSeries, wEnd: string, evals: WalkEval[]): SeriesWire {
               status: 'pending',
               projected: true,
               estCostCents: w.estCostCents,
-              feeIfCancelledTodayCents: 0,
+              // The same preview a real pending walk carries, from the same function.
+              feeIfCancelledTodayCents: feeToCancelTodayForList(
+                projectedId(id, w.date),
+                'pending',
+                w.estCostCents,
+                w.date,
+                v.service.CancellationTiers,
+                today,
+              ),
             },
           ]
         : [],

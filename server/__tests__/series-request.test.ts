@@ -1,18 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import app from '../index';
-import {
-  getTenantBySlug,
-  insertSeriesPetStatements,
-  insertSeriesStatement,
-  type SeriesRow,
-} from '../db/repo';
-import {
-  materializeSpan,
-  seriesAnswers,
-  SeriesTermsGone,
-  type SeriesTerms,
-} from '../lib/series-walks';
+import type { SeriesRow } from '../db/repo';
+import { seriesAnswers, SeriesTermsGone } from '../lib/series-walks';
 import { termsGoneFailure } from '../lib/series-ops';
 import { projectionCap } from '../lib/series-rule';
 import {
@@ -363,53 +353,35 @@ describe('POST /api/:slug/series', () => {
   });
 
   it('request: all-or-nothing — a failure inside the batch leaves no series, no row, no skip', async () => {
-    // The route refuses an unknown pet before any write, so atomicity is proven at the one batch
-    // the request runs: the series INSERT itself fails its CHECK (Weekdays 0) as the prelude, after
-    // the walks and a skip have been planned behind it.
-    const { env, raw } = await world();
-    const tenant = (await getTenantBySlug(env.PAWSERVATION_DB, 'sunny-paws'))!;
-    const today = TODAY();
-    const start = body().startDate as string;
-    blockDay(raw, 'blk_aon', addDays(start, 1));
+    // The route refuses a bad pet before any write, so atomicity is proven by failing the request's
+    // write at its LAST statement — the MaterializedThrough mark, swapped for one that fails
+    // Weekdays' CHECK — after the series, its pets, every walk row and a skip were written before
+    // it. In one batch they all roll back; run one by one, they would survive.
+    const { env, raw, token } = await world();
+    blockDay(raw, 'blk_aon', addDays(body().startDate as string, 1));
     const before = counts(raw);
-    const terms: SeriesTerms = {
-      endUserId: 'eu_sp_jess',
-      serviceType: 'walk',
-      optionKey: 'd30',
-      petIds: ['pet_sp_bella'],
-      weekdays: 2 | 8,
-      startTime: null,
-      startDate: start,
-      endDate: null,
-    };
-    const row: SeriesRow = {
-      Id: 'ser_aon',
-      TenantId: TENANT_A,
-      EndUserId: 'eu_sp_jess',
-      ServiceType: 'walk',
-      OptionKey: 'd30',
-      Weekdays: 0,
-      StartTime: null,
-      StartDate: start,
-      EndDate: null,
-      Status: 'pending',
-      CreatedBy: 'client',
-      OfferExpiresAt: null,
-      MaterializedThrough: null,
-      Version: 1,
-      GCalEventId: null,
-      SyncPending: 0,
-      CreatedAt: 'x',
-      UpdatedAt: 'x',
-    };
     const db = env.PAWSERVATION_DB;
-    await expect(
-      materializeSpan(env, tenant, row, terms, WINDOW_END(), today, 'pending', [
-        insertSeriesStatement(db, TENANT_A, { ...row, IdempotencyKey: null }),
-        ...insertSeriesPetStatements(db, TENANT_A, row.Id, terms.petIds),
-      ]),
-    ).rejects.toThrow(/CHECK/);
+    let swapped = false;
+    let batched = 0;
+    const failing = {
+      ...env,
+      PAWSERVATION_DB: {
+        prepare: (sql: string) => {
+          if (!sql.includes('SET MaterializedThrough')) return db.prepare(sql);
+          swapped = true;
+          return { bind: () => db.prepare(`UPDATE BookingSeries SET Weekdays = 0`) };
+        },
+        batch: (statements: D1PreparedStatement[]) => {
+          batched = Math.max(batched, statements.length);
+          return db.batch(statements);
+        },
+      },
+    } as unknown as Env;
+    const res = await post(failing, token, '/series', body());
+    expect(swapped).toBe(true);
+    expect(res.status).toBe(500);
     expect(counts(raw)).toEqual(before);
+    expect(batched).toBeGreaterThan(100); // series + pet + ~100 walks with their pets + a skip + mark
   });
 
   it('request: the same Idempotency-Key replays the first answer and creates nothing', async () => {
@@ -723,5 +695,167 @@ describe('termsGoneFailure — a term gone between the checks and the write', ()
     ['pet', 400, 'unknown_pet'],
   ] as const)("%s → %i %s, the single booking's code and status", (what, status, code) => {
     expect(termsGoneFailure(new SeriesTermsGone(what))).toMatchObject({ ok: false, status, code });
+  });
+});
+
+describe("Idempotency-Key is the caller's own", () => {
+  it("U2 and U3 sending U1's key each get their own series, never U1's", async () => {
+    const { env, raw, token } = await world();
+    raw.exec(`INSERT INTO EndUsers (Id, TenantId, Email, Name, Phone, Status)
+              VALUES ('eu_sp_sam', '${TENANT_A}', 'sam@example.com', 'Sam', '555-0100', 'active')`);
+    raw.exec(`INSERT INTO EndUserPets (Id, TenantId, EndUserId, Name, PetType)
+              VALUES ('pet_sp_rex', '${TENANT_A}', 'eu_sp_sam', 'Rex', 'dog')`);
+    raw.exec(
+      `INSERT INTO PetOwners (TenantId, PetId, EndUserId) VALUES ('${TENANT_A}', 'pet_sp_rex', 'eu_sp_sam')`,
+    );
+    const u1 = (await (
+      await post(env, token, '/series', body(), { 'Idempotency-Key': 'shared-key' })
+    ).json()) as Wire;
+
+    const u2Token = await endUserToken(env, 'sunny-paws', 'sam@example.com');
+    const u2 = await post(env, u2Token, '/series', body({ petIds: ['pet_sp_rex'] }), {
+      'Idempotency-Key': 'shared-key',
+    });
+    expect(u2.status).toBe(201);
+    const u2Body = (await u2.json()) as Wire;
+    expect(u2Body.id).not.toBe(u1.id);
+    expect(u2Body.pets).toEqual(['Rex']);
+
+    const u3Token = await endUserToken(env, 'happy-tails', 'jess@example.com');
+    const u3 = await post(
+      env,
+      u3Token,
+      '/series',
+      body({ petIds: ['pet_ht_otis'] }),
+      { 'Idempotency-Key': 'shared-key' },
+      'happy-tails',
+    );
+    expect(u3.status).toBe(201);
+    const u3Body = (await u3.json()) as Wire;
+    expect(u3Body.id).not.toBe(u1.id);
+    expect(u3Body.pets).toEqual(['Otis']);
+    expect(
+      raw
+        .prepare(`SELECT TenantId, EndUserId FROM BookingSeries ORDER BY TenantId, EndUserId`)
+        .all(),
+    ).toEqual([
+      { TenantId: 'tnt_happytails', EndUserId: 'eu_ht_jess' },
+      { TenantId: TENANT_A, EndUserId: 'eu_sp_jess' },
+      { TenantId: TENANT_A, EndUserId: 'eu_sp_sam' },
+    ]);
+  });
+
+  it('a unique violation that is not a key replay is rethrown, never answered as a replay', async () => {
+    const { env, raw, token } = await world();
+    const before = counts(raw);
+    const db = env.PAWSERVATION_DB;
+    const colliding = {
+      ...env,
+      PAWSERVATION_DB: {
+        prepare: (sql: string) => db.prepare(sql),
+        batch: async () => {
+          throw new Error(
+            'UNIQUE constraint failed: BookingRequests.SeriesId, BookingRequests.StartDate',
+          );
+        },
+      },
+    } as unknown as Env;
+    const res = await post(colliding, token, '/series', body(), { 'Idempotency-Key': 'k-collide' });
+    expect(res.status).toBe(500);
+    expect(counts(raw)).toEqual(before);
+  });
+});
+
+describe('the sitter is told of a series request', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const RESEND = {
+    RESEND_API_KEY: 'k',
+    RESEND_FROM_NOREPLY: 'Pawservation <no_reply@x.com>',
+    RESEND_FROM_BOOKING: 'Pawservation <booking@x.com>',
+  };
+
+  async function mailWorld(contactEmail: string | null) {
+    // The address is set before the first request: the tenant row is cached once resolved. The
+    // login code is sent before email is configured, so it never reaches the spy.
+    const { env, raw } = createTestEnv();
+    raw.prepare(`UPDATE Tenants SET ContactEmail = ? WHERE Id = ?`).run(contactEmail, TENANT_A);
+    await clearSeededBookings(env);
+    const w = { env, raw, token: await endUserToken(env, 'sunny-paws', 'jess@example.com') };
+    Object.assign(w.env, RESEND);
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const sent = () =>
+      spy.mock.calls
+        .filter((c) => String(c[0]).includes('api.resend.com'))
+        .map(
+          (c) =>
+            JSON.parse((c[1] as RequestInit).body as string) as {
+              to: string;
+              subject: string;
+              text: string;
+              html: string;
+            },
+        );
+    return { ...w, sent };
+  }
+
+  it('request: one email to her contact address, with the pattern and the pets, and no figure', async () => {
+    const { env, token, sent } = await mailWorld('sitter@sunnypaws.example');
+    const res = await post(env, token, '/series', body());
+    expect(res.status).toBe(201);
+    const s = (await res.json()) as Wire;
+    const mail = sent();
+    expect(mail).toHaveLength(1);
+    expect(mail[0].to).toBe('sitter@sunnypaws.example');
+    for (const part of [s.pattern, 'Bella', 'Walk', 'Jess Demo']) {
+      expect(mail[0].text).toContain(part);
+      expect(mail[0].html).toContain(part);
+    }
+    expect(mail[0].text).toContain('priced for its own date');
+    expect(mail[0].text).not.toContain('$');
+    expect(mail[0].html).not.toContain('$');
+  });
+
+  it('request: no contact address → no email', async () => {
+    const { env, token, sent } = await mailWorld(null);
+    expect((await post(env, token, '/series', body())).status).toBe(201);
+    expect(sent()).toHaveLength(0);
+  });
+
+  it('request: an idempotent replay sends nothing more', async () => {
+    const { env, token, sent } = await mailWorld('sitter@sunnypaws.example');
+    await post(env, token, '/series', body(), { 'Idempotency-Key': 'mail-once' });
+    await post(env, token, '/series', body(), { 'Idempotency-Key': 'mail-once' });
+    expect(sent()).toHaveLength(1);
+  });
+
+  it('request: the demo identity sends nothing', async () => {
+    const { env, raw } = createTestEnv();
+    raw.exec(`UPDATE Tenants SET ContactEmail = 'sitter@pr.example' WHERE Id = 'tnt_pawsandrelax'`);
+    const token = await demoToken(env, 'paws-and-relax');
+    Object.assign(env, RESEND);
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 200 }));
+    const demoPet = (
+      raw
+        .prepare(
+          `SELECT p.Id FROM EndUserPets p JOIN EndUsers u ON u.Id = p.EndUserId
+            WHERE u.TenantId = 'tnt_pawsandrelax' AND u.Email = 'demo@pawservation.com'`,
+        )
+        .get() as { Id: string }
+    ).Id;
+    const res = await post(
+      env,
+      token,
+      '/series',
+      body({ petIds: [demoPet] }),
+      {},
+      'paws-and-relax',
+    );
+    expect(res.status).toBe(201);
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes('api.resend.com'))).toHaveLength(0);
   });
 });
