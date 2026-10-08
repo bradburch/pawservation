@@ -91,7 +91,7 @@ describe('GET /privacy', () => {
     );
     expect(body).not.toMatch(/Sitters don&rsquo;t see this archive/);
     expect(body).toMatch(
-      /A sitter on Pro can also read the conversations her own clients had with the friendly AI assistant, on WhatsApp and in the chat on her booking page, from the day booking by message began \(October 6, 2026\)/,
+      /A sitter on Pro can also read the conversations her own clients had with the friendly AI assistant on WhatsApp, from the day booking by message began \(October 6, 2026\)/,
     );
     expect(body).toMatch(
       /can&rsquo;t edit or delete what was said, and never sees verification codes or payment links/,
