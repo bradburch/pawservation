@@ -29,6 +29,9 @@ const BANNED = [
   'booking by chat',
   'made-up sitter&rsquo;s account',
   "made-up sitter's account",
+  // The demo is two sitters' booking pages, never one.
+  'made-up sitter&rsquo;s booking page',
+  "made-up sitter's booking page",
   '[NEED',
 ];
 

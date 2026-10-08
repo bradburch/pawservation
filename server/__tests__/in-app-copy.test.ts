@@ -60,8 +60,9 @@ describe('landing wording', () => {
     expect(body).toContain('a friendly assistant answers');
     expect(body).toContain('A helper for your back office');
     expect(body).toMatch(/back-office helper.*who owes you/i);
-    expect(body).toMatch(/clients who use Claude or ChatGPT can book through it too/i);
+    expect(body).toMatch(/clients who use Claude can connect it and book with you/i);
     expect(body).not.toContain('such as Claude');
+    expect(body).not.toContain('ChatGPT');
     expect(body).not.toContain('back-office assistant');
   });
 

@@ -6,8 +6,10 @@ description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /
 # Marketing pages, SEO and agent-discoverability
 
 Six worker-rendered marketing pages (`/`, `/how-it-works`, `/about`, `/contact`, `/privacy`,
-`/terms`) plus the two sign-up pages, `/signup` and `/signup/sent`. All are rendered by
-`server/index.ts` (the sign-up pages by `server/routes/signup-page.ts`), served under `LOCKED_CSP` +
+`/terms`), the three setup guides (`/getting-started`, `/getting-started/whatsapp`,
+`/getting-started/card-payments`, rendered by `server/lib/setup-guides.ts`) plus the two sign-up
+pages, `/signup` and `/signup/sent`. The rest are rendered by
+`server/index.ts` (the sign-up pages by `server/routes/signup-page.ts`). All are served under `LOCKED_CSP` +
 `X-Frame-Options: DENY`, and
 pinned by `server/__tests__/seo.test.ts` and `landing.test.ts`.
 
@@ -26,8 +28,10 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
 - **`rel="canonical"` is pinned to `BRAND_ORIGIN`, never the request origin.**
 - **No fabricated headcount, funding, founding date or street address anywhere.** Nothing unbuilt
   may be described as available either, with one standing exception the owner made on 2026-09-04:
-  the Pro tier is presented as sold. No page may offer a checkout, a card form or a trial mechanic,
-  because this repo contains no billing code.
+  the Pro tier is presented as sold. No page may offer a checkout, a card form or a trial mechanic:
+  this repo's billing code only records the plan premium reports (`POST
+  /api/:slug/admin/billing/events`) and sends a signed-in sitter from the dashboard's plan panel to
+  premium's Stripe checkout, so a marketing page has no checkout to offer.
   Booking by WhatsApp is sold as part of Pro on the owner's instruction (2026-10-05), and the copy
   claims only what it does: clients message the sitter's own number to book, get a quote,
   reschedule or cancel; she gets each new request as an alert with Confirm and Decline; the client
@@ -76,7 +80,7 @@ pages, and carries sign-up attribution.
 
 ## `pageHead` and the canonical
 
-All six pages build their head through `pageHead(path, title, description)` in
+All nine pages (the six above and the three setup guides) build their head through `pageHead(path, title, description)` in
 `server/lib/page-chrome.ts` (beside `pageFooter()` and `STRIPE_LINK`),
 which emits an **absolute** `rel="canonical"` pinned to `BRAND_ORIGIN` (`server/lib/email.ts`,
 exported for this — **one host constant, never two**) alongside the description and Open Graph tags.
@@ -340,7 +344,7 @@ Two purpose-built 1200x630 PNGs, **split by AUDIENCE, and that split is the poin
 
 | File                        | Declared by                              | Reader                                    |
 | --------------------------- | ---------------------------------------- | ----------------------------------------- |
-| `public/img/og-card.png`    | `pageHead` (all six pages) + `demo.html` | a prospective **sitter**, being recruited |
+| `public/img/og-card.png`    | `pageHead` (all nine pages) + `demo.html` | a prospective **sitter**, being recruited |
 | `public/img/og-booking.png` | `embedCardTags` on `/embed/:slug`        | a **pet owner** texted her sitter's link  |
 
 The most-shared link this product has is a sitter texting a client her own booking page, and that

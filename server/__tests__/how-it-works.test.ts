@@ -136,7 +136,7 @@ describe('GET /how-it-works — the tour page', () => {
     // sendBookingStatusEmail fires on confirm/decline/cancel from the admin status route
     // (server/routes/admin.ts), so the sitter does not have to send the "you're booked" message.
     expect(body).toContain('your client is emailed the moment you do');
-    // There is no billing code in this repo, and on Solo the money never touches it: the sitter
+    // This repo holds no checkout of any kind, and on Solo the money never touches it: the sitter
     // is paid directly. The page states that as the positive claim a sitter cares about, so the
     // pin that used to hold the words "never processes" is now the claim plus a ban on the
     // opposite, which is the half that could ever mislead.
@@ -381,9 +381,9 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).toContain('up to 60 dates at a time');
   });
 
-  it('states the one-sitter limit on Solo, and never claims partial-day time off', async () => {
+  it('states one sitter per account, and never claims partial-day time off', async () => {
     const body = await howItWorksBody();
-    // Solo is one sitter per account, pinned from landing.test.ts too.
+    // Every account is one sitter, on Solo and Pro alike; pinned from landing.test.ts too.
     expect(body).toContain('Pawservation is made for one person running her own book.');
     // owner removed the whole-days item from the tour, 2026-09-04
     expect(body).not.toMatch(/block (an|a single) hour|hourly time off|part of a day/i);
@@ -490,8 +490,8 @@ describe('GET /how-it-works — the tour page', () => {
   it('states the plan prices from PRICING, and offers no checkout for them', async () => {
     const body = await howItWorksBody();
     // Five surfaces state these numbers and any two disagreeing is a pricing lie, so the page
-    // interpolates rather than hardcodes. There is no billing code in this repo, so the trial is
-    // a fact the page states and never a flow it offers.
+    // interpolates rather than hardcodes. The checkout lives in premium, reached from the
+    // dashboard, so the trial is a fact the page states and never a flow it offers.
     expect(body).toContain(PRICE_LINE);
     expect(body).toContain(TRIAL_LINE);
     expect(body).not.toMatch(
@@ -701,7 +701,7 @@ describe('the landing page claims only what ships', () => {
     expect(body).not.toContain('Available now');
     expect(body).toContain('<h3>Solo</h3>');
     expect(body).toContain('<h3>Pro</h3>');
-    // There is no billing code in this repo. Sign-up is the only call to action either card
+    // No checkout is reachable from this page. Sign-up is the only call to action either card
     // offers, so nothing here may read as a purchase the visitor can complete: "no credit card
     // required" describes a card step nothing in this repo could ask for or skip. The owner let the
     // hero button name the trial on 2026-10-08 ("Start your 30-day free trial" leads to the same
@@ -729,7 +729,7 @@ describe('the landing page claims only what ships', () => {
 
   it('keeps the MCP/assistant-booking bullet on the Pro card', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/clients who use Claude or ChatGPT can book through it too/i);
+    expect(body).toMatch(/clients who use Claude can connect it and book with you/i);
     // Owner repriced on 2026-09-04: the bullet's card is a product now, and the only thing the
     // page still may not do is offer a checkout it has no code for.
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);

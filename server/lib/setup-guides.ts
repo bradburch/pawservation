@@ -227,7 +227,7 @@ export const GETTING_STARTED_HTML = guidePage(
             <p><strong>A day shows as unavailable.</strong> Look for time off, a full day, an event on your Google Calendar, or a service that needs more notice.</p>
             <p><strong>My dashboard is read-only.</strong> Your plan has lapsed. Choose one under &ldquo;Your plan&rdquo;; your bookings, clients and pets are untouched.</p>
             <p><strong>Anything else.</strong> Email ${SUPPORT_LINK} and say which business you run. A person reads it.</p>
-            <p>Want the bigger picture? Read the <a href="/how-it-works">full tour</a>, or try the <a href="/demo">demo</a>: a made-up sitter&rsquo;s booking page, with nothing to sign up for and nothing you can break.</p>
+            <p>Want the bigger picture? Read the <a href="/how-it-works">full tour</a>, or try the <a href="/demo">demo</a>: two made-up sitters&rsquo; booking pages, with nothing to sign up for and nothing you can break.</p>
           </div>
         </div>
       </section>`,
@@ -253,7 +253,7 @@ export const WHATSAPP_GUIDE_HTML = guidePage(
             <p><strong>You&rsquo;ll need:</strong></p>
             <ul>
               <li>a phone number for your business (see &ldquo;Which number?&rdquo; below);</li>
-              <li>WhatsApp on your own phone, on a different number, for your booking alerts;</li>
+              <li>WhatsApp on your own phone, on a different US number, for your booking alerts;</li>
               <li>a Facebook login;</li>
               <li>a debit or credit card for Meta, which bills you for some messages;</li>
               <li>a computer, with your dashboard open.</li>
@@ -315,7 +315,12 @@ export const WHATSAPP_GUIDE_HTML = guidePage(
 
           <div class="feature" id="done">
             <h2>Done, and sharing it</h2>
-            <p><strong>You&rsquo;re done when</strong> the WhatsApp section says &ldquo;Ready&rdquo;. Ask a friend to message your business number &ldquo;Are you free next Saturday?&rdquo; and watch the answer arrive.</p>
+            <p><strong>You&rsquo;re done when</strong> the WhatsApp section says &ldquo;Ready&rdquo;. To try it out:</p>
+            <ol>
+              <li>Add a friend as a client in <strong>Clients</strong>, with their mobile number.</li>
+              <li>The first time they message your business number, they&rsquo;re emailed a code to reply with.</li>
+              <li>After that, have them ask &ldquo;Are you free next Saturday?&rdquo; and watch the answer arrive.</li>
+            </ol>
             <p><strong>Share it.</strong> The section shows your WhatsApp link and a QR code. Add a short greeting, put the link in your Instagram bio or on your website, and print the QR code for flyers.</p>
           </div>
 

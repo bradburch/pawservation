@@ -166,6 +166,19 @@ describe('what each guide must say', () => {
     expect(body).toContain('The number your clients already message.');
     expect(body).toContain('becomes the number your alerts go to');
     expect(body).toContain('Make a separate token for card payments');
+    // The admin number has to be a US number, and not the business number.
+    expect(body).toContain('WhatsApp on your own phone, on a different US number');
+  });
+
+  it('WhatsApp: the "done" test starts by adding the friend as a client', async () => {
+    const body = await (await page('/getting-started/whatsapp')).text();
+    const done = body.slice(body.indexOf('id="done"'), body.indexOf('id="costs"'));
+    // Premium answers an unknown sender with a fixed reply, and emails a recognised
+    // client a code the first time they message, so the friend must be a client first.
+    expect(done).toContain('Add a friend as a client in <strong>Clients</strong>, with their mobile number.');
+    expect(done).toContain('they&rsquo;re emailed a code');
+    expect(done).toContain('&ldquo;Are you free next Saturday?&rdquo;');
+    expect(done.indexOf('Add a friend')).toBeLessThan(done.indexOf('Are you free next Saturday'));
   });
 
   it('cards: what Stripe asks for, its rate by link, payout timing, and after-stay rules', async () => {

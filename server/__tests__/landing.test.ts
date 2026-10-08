@@ -234,12 +234,12 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('up to 500');
   });
 
-  it('never implies Solo runs a team, and keeps the limit stated on the tour', async () => {
+  it('never implies a team product, and keeps one sitter per account stated on the tour', async () => {
     // The owner removed "Can my whole team use it?" from the landing page: it is a question a
     // sitter asks once she is interested, and the page's job is to get her to ask for an invite.
-    // The limit itself did not go anywhere — /how-it-works now states it beside the other thing
-    // that isn't built (the repeating schedule), which is where the honesty pages live. What the
-    // landing page must still never do is claim the thing it can't do.
+    // The limit itself did not go anywhere: every account is one sitter on every plan, and
+    // /how-it-works states it in its "Good to know" section. What the landing page must still
+    // never do is claim the thing it can't do.
     const body = await landingBody();
     expect(body).not.toContain('Can my whole team use it?');
     for (const unbuilt of ['your team can', 'add your sitters', 'invite your team', 'per seat'])
@@ -247,7 +247,7 @@ describe('GET / — landing page', () => {
     // The owner repriced on 2026-09-04: Pro is sold, so the unbuilt framing is gone from the card.
     expect(body).not.toContain('Not available yet');
     expect(body).not.toContain('it isn&rsquo;t built yet');
-    // …and the tour still names the tier the one-sitter limit belongs to.
+    // …and the tour still says every account is one sitter.
     const { env } = createTestEnv();
     const tour = await (await app.request('/how-it-works', {}, env)).text();
     expect(tour).toContain('Pawservation is made for one person running her own book.');
@@ -277,8 +277,8 @@ describe('GET / — landing page', () => {
     expect(chip).toBeLessThan(body.indexOf('<h1>'));
     expect(chip).toBeLessThan(body.indexOf('<p class="note">'));
     // The hero says what the pricing section says. 2026-10-05: one wording everywhere (PRICE_LINE),
-    // so Solo is "$15 a month" with no qualifier: Solo is one sitter by definition, and "per
-    // sitter" belongs to Pro, which sells extra sitters.
+    // so Solo is "$15 a month" with no qualifier: every account is one sitter, and no plan sells
+    // extra sitters, so nothing is priced "per sitter".
     expect(body).toContain('<h2 id="pricing-h">$15 a month</h2>');
     expect(body).toContain('<span class="price-per">a month</span>');
     // $15 is a standing price, not a discount with a clock on it. The 30-day trial the owner added

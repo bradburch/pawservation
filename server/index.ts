@@ -715,7 +715,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Booking by WhatsApp on your own business number, with a friendly assistant and Confirm and Decline alerts</li>
                 <li>Card payments through your own Stripe account, with no cut for Pawservation</li>
                 <li>A back-office helper that tells you who owes you and what your week looks like</li>
-                <li>Clients who use Claude or ChatGPT can book through it too</li>
+                <li>Clients who use Claude can connect it and book with you</li>
               </ul>
               <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
@@ -876,7 +876,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
           <p class="note">
-            The demo shows a made-up sitter&rsquo;s booking page, so there is nothing to sign up for and
+            The demo shows two made-up sitters&rsquo; booking pages, so there is nothing to sign up for and
             nothing you can break.
           </p>
         </div>
