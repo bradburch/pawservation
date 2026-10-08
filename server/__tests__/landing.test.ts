@@ -156,7 +156,7 @@ describe('GET / — landing page', () => {
     // …and the tour still names the tier the one-sitter limit belongs to.
     const { env } = createTestEnv();
     const tour = await (await app.request('/how-it-works', {}, env)).text();
-    expect(tour).toContain('Solo runs one sitter per account');
+    expect(tour).toContain('Pawservation is made for one person running her own book.');
   });
 
   it('tells visitors the demo costs them nothing to try', async () => {

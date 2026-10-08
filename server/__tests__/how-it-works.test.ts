@@ -112,6 +112,7 @@ describe('GET /how-it-works — the tour page', () => {
     // her tap, the same rule "Nothing books itself." states for every other path.
     expect(body).toContain('a friendly assistant');
     expect(body).toContain('WhatsApp alert with Confirm and Decline buttons');
+    expect(body).toContain('<h3>An assistant for your back office</h3>');
     // Card payments are a card in that section, not the headline. The Stripe arrangement is still
     // stated ONCE (the Services aside, pinned above), so this card names the fee terms only.
     expect(body).toContain('Stripe&rsquo;s published rate and no fee to Pawservation');
@@ -379,7 +380,7 @@ describe('GET /how-it-works — the tour page', () => {
   it('states the one-sitter limit on Solo, and never claims partial-day time off', async () => {
     const body = await howItWorksBody();
     // Solo is one sitter per account, pinned from landing.test.ts too.
-    expect(body).toContain('Solo runs one sitter per account');
+    expect(body).toContain('Pawservation is made for one person running her own book.');
     // owner removed the whole-days item from the tour, 2026-09-04
     expect(body).not.toMatch(/block (an|a single) hour|hourly time off|part of a day/i);
   });
@@ -724,7 +725,7 @@ describe('the landing page claims only what ships', () => {
 
   it('keeps the MCP/assistant-booking bullet on the Pro card', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/connect an ai assistant.*check availability and book/i);
+    expect(body).toMatch(/their own assistant, such as Claude/);
     // Owner repriced on 2026-09-04: the bullet's card is a product now, and the only thing the
     // page still may not do is offer a checkout it has no code for.
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);

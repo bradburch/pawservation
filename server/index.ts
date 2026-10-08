@@ -11,6 +11,7 @@ import {
 import { TURNSTILE_SCRIPT_ORIGIN } from './lib/turnstile';
 import { requestContext } from './lib/log';
 import { tenantMiddleware } from './lib/middleware';
+import { pageFooter, pageHead, STRIPE_LINK } from './lib/page-chrome';
 import { PAGE_STYLE } from './lib/page-style';
 import { PRICE_LINE, PRICING, TRIAL_LINE } from './lib/plan-pricing';
 import { premiumOrigin } from './lib/premium';
@@ -258,123 +259,6 @@ app.get('/setup', page('setup.html')); // create-password page for emailed signu
 app.get('/admin.html', page('admin.html'));
 app.get('/demo.html', page('demo.html'));
 app.get('/setup.html', page('setup.html'));
-
-/**
- * Where "Stripe's published rate" points, beside every place a page states it. Stripe's own page,
- * because this product states no processing figure of its own: none is in code, and a number typed
- * here would go stale the day Stripe changed theirs.
- */
-const STRIPE_LINK = '(<a href="https://stripe.com/pricing">see Stripe&rsquo;s pricing</a>)';
-
-/**
- * The shared page footer. Extracted when /about and /contact would have made it a SIXTH hand-kept
- * copy of the same markup — the four that existed had already drifted into two variants that
- * differed only in one link's label and one anchor's href, which is the drift a fifth and sixth
- * copy guarantees rather than risks. Every link here is absolute (`/#pricing`, not `#pricing`) so
- * one version serves every page: from the landing itself an absolute same-page hash still just
- * scrolls.
- */
-function pageFooter(): string {
-  return `<footer class="foot">
-      <div class="wrap">
-        <div class="foot-grid">
-          <div class="foot-brand">
-            <a class="logo" href="/">
-              <img src="/brand/calendar.svg" width="30" height="28" alt="" />
-              Pawservation
-            </a>
-            <p>Booking software for pet sitters and dog walkers, on your website or at a link you send.</p>
-          </div>
-          <div>
-            <h3>Product</h3>
-            <ul>
-              <li><a href="/demo">Try the demo</a></li>
-              <li><a href="/admin">Sitter sign in</a></li>
-              <li><a href="/how-it-works">Full tour</a></li>
-              <li><a href="/getting-started">Setup guide</a></li>
-              <li><a href="/#pricing">Pricing</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Company</h3>
-            <ul>
-              <li><a href="/about">About</a></li>
-              <li><a href="/contact">Contact</a></li>
-            </ul>
-          </div>
-          <div>
-            <h3>Legal</h3>
-            <ul>
-              <li><a href="/privacy">Privacy</a></li>
-              <li><a href="/terms">Terms</a></li>
-            </ul>
-          </div>
-        </div>
-        <div class="foot-bottom">
-          <p>
-            Created by <a href="https://bradburch.github.io/">Brad Burch</a>
-          </p>
-        </div>
-      </div>
-    </footer>`;
-}
-
-/**
- * The <head> tags every worker-served marketing page shares, so a page's own file carries only
- * what differs: its title and its one-sentence description.
- *
- * `rel="canonical"` is ABSOLUTE and pinned to BRAND_ORIGIN on purpose. This worker answers on
- * several hosts (the pawservation.com custom domain, workers.dev under `workers_dev: true`, and a
- * fresh preview URL per `wrangler versions upload`), and without a canonical a crawler indexes the
- * same page once per host and splits its ranking across the copies. Same reasoning as
- * `callbackUriFor`'s, arriving at the opposite answer: OAuth needs the host the request actually
- * came in on, search needs the one host the page should be found under.
- *
- * Title and description are the two strings a search result is BUILT from, so they carry the words
- * a sitter actually types ("pet sitting software", "dog walking") rather than the in-house framing
- * ("booking for pet-sitting businesses") the body copy used to carry alone. Both are literals here,
- * never interpolated from anything a tenant controls — these pages have no tenant.
- *
- * NOT emitted here: the homepage's JSON-LD, which is spliced into LANDING_HTML alone. It answers
- * "what is this product and who stands behind it", a question only the homepage is the answer to —
- * repeating an identity graph on /privacy would give a crawler four competing candidates for one
- * entity. It is an inert `application/ld+json` DATA block, which is why it survives LOCKED_CSP: the
- * type is not a script type, so it never executes and CSP never evaluates it — the same exemption
- * the embed page's LocalBusiness block already relies on. The marketing pages stay free of
- * EXECUTABLE script, which is what that rule was always protecting; `landing.test.ts` pins the
- * distinction rather than the substring.
- *
- * `og:image` is a PURPOSE-BUILT 1200x630 PNG (`public/img/og-card.png`), not a screenshot. The
- * branch that added these tags first pointed at `widget-hero.webp` — 932x1990, a portrait strip —
- * under `summary_large_image`, which crops to roughly 1.91:1 and would have unfurled every shared
- * link as an unreadable sliver of a calendar. The image and the card type move TOGETHER or not at
- * all, which a test pins: a large-image card with no image, or this image under a `summary` card,
- * are both wrong. PNG rather than WebP because not every unfurler accepts WebP, and the file is
- * never loaded by the page itself — only fetched by an unfurler — so it sits outside the landing
- * page's weight budget. Regenerate it with the recipe in `docs/og-card.md`.
- *
- * It is the card for THESE pages only. `/embed/:slug` carries its own (`embedCardTags`, above)
- * against `public/img/og-booking.png`, because a pet owner handed her sitter's booking link is not
- * a sitter being recruited, and this card's words are addressed to the sitter.
- */
-function pageHead(path: string, title: string, description: string): string {
-  return `<title>${title}</title>
-    <meta name="description" content="${description}" />
-    <link rel="canonical" href="${BRAND_ORIGIN}${path}" />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Pawservation" />
-    <meta property="og:title" content="${title}" />
-    <meta property="og:description" content="${description}" />
-    <meta property="og:url" content="${BRAND_ORIGIN}${path}" />
-    <meta property="og:image" content="${BRAND_ORIGIN}/img/og-card.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Pawservation: pet sitting and dog walking software" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />`;
-}
 
 /**
  * Root landing page: a marketing page for prospective pet sitters, built around real
@@ -730,7 +614,7 @@ const LANDING_HTML = `<!doctype html>
             <span class="label">Pro</span>
             <h2 id="pro-h">A friendly assistant, and you still decide</h2>
             <p>
-              On Pro, a booking assistant answers your clients in the chat on your booking page and
+              On Pro, a booking assistant answers your clients
               on your own WhatsApp number. It handles the routine questions, whether you&rsquo;re free,
               what a stay costs, moving a date and what they owe, and leaves every booking for you
               to confirm with a tap. It has a daily allowance, and when that runs out clients are
@@ -743,8 +627,8 @@ const LANDING_HTML = `<!doctype html>
               <p>Clients message your own WhatsApp number to book, get a quote, reschedule or cancel. Each new request reaches you as a WhatsApp alert with Confirm and Decline buttons, and your client hears the answer.</p>
             </div>
             <div class="feature">
-              <h3>The same assistant on your booking page</h3>
-              <p>The chat on your booking page is the same assistant, with your rates, your rules and your open dates, so clients get the same answers wherever they ask.</p>
+              <h3>An assistant for your back office</h3>
+              <p>Ask who still owes you or what next week looks like, and get the answer from your own records.</p>
             </div>
             <div class="feature">
               <h3>Card payments through your own Stripe account</h3>
@@ -764,8 +648,8 @@ const LANDING_HTML = `<!doctype html>
             <span class="label">Pricing</span>
             <h2 id="pricing-h">$${PRICING.soloMonthly} a month</h2>
             <p>
-              Pro adds a booking assistant in your page&rsquo;s chat and on WhatsApp, card
-              payments through your own Stripe account and extra sitters. ${PRICE_LINE}
+              Pro adds booking by WhatsApp with a friendly assistant, and card
+              payments through your own Stripe account. ${PRICE_LINE}
             </p>
           </div>
           <div class="price-grid">
@@ -796,19 +680,17 @@ const LANDING_HTML = `<!doctype html>
               </div>
               <p class="price-amt">
                 <span class="price-num">$${PRICING.proMonthly}</span>
-                <span class="price-per">a month, per sitter</span>
+                <span class="price-per">a month</span>
               </p>
               <ul class="price-list">
                 <li>Everything in Solo</li>
                 <li>Booking by WhatsApp: clients book, get quotes, reschedule and cancel by messaging your own number, and you confirm or decline each new request from a WhatsApp alert</li>
-                <li>A booking assistant in your page&rsquo;s chat: clients check availability, get a quote and book</li>
-                <li>Connect an AI assistant such as Claude to check availability and book for you</li>
+                <li>Clients can book through their own assistant, such as Claude</li>
                 <li>Back-office assistant: ask who owes you and what your week looks like</li>
                 <li>Card payments through your own Stripe account: deposits, saved cards, and the balance charged after each stay, at Stripe&rsquo;s published rate with no fee from Pawservation</li>
-                <li>Extra sitters, with assignment</li>
               </ul>
               <a class="btn btn-primary" href="/signup">Sign up</a>
-              <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year, per sitter. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
+              <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
             </div>
           </div>
           <p class="note wf-more">${TRIAL_LINE}</p>
@@ -933,7 +815,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
           <p class="note">
-            The demo is a made-up sitter&rsquo;s account, so there is nothing to sign up for and
+            The demo shows a made-up sitter&rsquo;s booking page, so there is nothing to sign up for and
             nothing you can break.
           </p>
         </div>
@@ -1175,8 +1057,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>Clients message your own WhatsApp number to book, get a quote, reschedule or cancel. Each new request reaches you as a WhatsApp alert with Confirm and Decline buttons, and your client hears the answer.</p>
             </div>
             <div class="feature">
-              <h3>The same assistant on your booking page</h3>
-              <p>The chat on your booking page gives the same answers, so clients hear the same thing wherever they ask.</p>
+              <h3>An assistant for your back office</h3>
+              <p>Ask who still owes you or what next week looks like, and get the answer from your own records.</p>
             </div>
             <div class="feature">
               <h3>Card payments</h3>
@@ -1194,7 +1076,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p><strong>Sign up.</strong> Enter your email on the homepage and we will email you a sign-up link.</p>
             <p><strong>Set up your services and rates.</strong> The wizard offers presets, each a whole service already shaped, so you tap the ones that describe you and type your prices.</p>
             <p><strong>Share your booking page.</strong> No website? Copy your booking link from <strong>Settings &rarr; Your website</strong>, and send it to clients. Have a website? Copy the code from the same place, already carrying your business&rsquo;s name, and paste it into a Code block on Squarespace, or use the second code with Wix&rsquo;s &ldquo;Embed a site&rdquo;. It sizes itself to fit.</p>
-            <p class="note">${PRICE_LINE} Pro adds card payments, booking by WhatsApp, booking by chat and extra sitters. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
+            <p class="note">${PRICE_LINE} Pro adds booking by WhatsApp, card payments and a back-office assistant. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
             <p class="note">${TRIAL_LINE}</p>
             <p class="note">Want every step written out, from your first sign-in to connecting WhatsApp? Read the <a href="/getting-started">setup guide</a>.</p>
           </div>
@@ -1232,8 +1114,8 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           </div>
           <div class="wf-math">
             <div class="wf-pair">
-              <p class="wf-keep">Solo runs one sitter per account.</p>
-              <p>Extra sitters, with assignment between them, are part of Pro.</p>
+              <p class="wf-keep">One sitter per account.</p>
+              <p>Pawservation is made for one person running her own book.</p>
             </div>
             <div class="wf-pair">
               <p class="wf-keep">Your rates are public.</p>
@@ -1829,7 +1711,7 @@ const GETTING_STARTED_HTML = `<!doctype html>
 
           <div class="feature" id="plan">
             <h2>9. Choosing a plan</h2>
-            <p>${PRICE_LINE} Solo is your booking page, clients, rates, payment tracking and Google Calendar. Pro adds a booking assistant in your booking page&rsquo;s chat and on WhatsApp, card payments through your own Stripe account, and extra sitters.</p>
+            <p>${PRICE_LINE} Solo is your booking page, clients, rates, payment tracking and Google Calendar. Pro adds booking by WhatsApp with a friendly assistant, and card payments through your own Stripe account.</p>
             <p>${TRIAL_LINE}</p>
             <p>Your plan lives at the bottom of <strong>Settings &rarr; Business</strong>, under &ldquo;Your plan&rdquo;. Press &ldquo;Subscribe&rdquo; beside Solo, Pro or Pro, yearly. Stripe asks for your card on its own page, so Pawservation never sees it, and Pro&rsquo;s features switch on as soon as you subscribe to Pro. Once you have a plan, &ldquo;Manage plan&rdquo; is where you change your card or see past payments, and &ldquo;Sync with Stripe&rdquo; puts things right if your plan ever looks wrong there.</p>
             <p>Nothing about your bookings, clients or pets changes when you subscribe or switch plans. A plan only decides which extras are switched on.</p>
@@ -1841,7 +1723,7 @@ const GETTING_STARTED_HTML = `<!doctype html>
             <p><strong>Connecting.</strong> In the business audit card on your dashboard, find &ldquo;Card payments&rdquo; and choose &ldquo;Open card payments&rdquo;. There, press &ldquo;Connect Stripe&rdquo;. Stripe opens and asks for your details and your bank account, the same as any Stripe signup. When you come back, Stripe may still be checking your details for a few minutes; &ldquo;Continue setup&rdquo; takes you back to Stripe if it needs anything else.</p>
             <p><strong>An access token.</strong> Card payments need to act for you when nobody is signed in, for example to record a deposit at night. Open <strong>Settings &rarr; Business &rarr; Access tokens</strong>, create a token, paste it into card payments and press &ldquo;Save token&rdquo;. When it is done, card payments says it is on are on and names the Stripe account the money goes to.</p>
             <p><strong>Deposits.</strong> Choose &ldquo;No deposit&rdquo;, &ldquo;A fixed amount&rdquo; or &ldquo;A percentage of the estimate&rdquo;, press &ldquo;Set deposit rule&rdquo;, read the sentence it shows you, and press &ldquo;Confirm deposit rule&rdquo;. A deposit is asked for on confirmed bookings whose stay has not ended yet.</p>
-            <p><strong>Charging the balance after a stay.</strong> This only ever happens to a client who asked for it. A client saves a card by paying a deposit, then asks the assistant to charge that card after each stay and taps &ldquo;Allow charges after stays&rdquo;. Once you press &ldquo;Charge saved cards after stays&rdquo; and confirm, each of those households is charged what its booking still owes, as your balance shows it, on the morning after the stay ends. Nothing is worked out or added on, and a stay already paid in full is never charged.</p>
+            <p><strong>Charging the balance after a stay.</strong> This only ever happens to a client who asked for it. A client saves a card by paying a deposit, then asks, on WhatsApp or through their own assistant, to charge that card after each stay and taps &ldquo;Allow charges after stays&rdquo;. Once you press &ldquo;Charge saved cards after stays&rdquo; and confirm, each of those households is charged what its booking still owes, as your balance shows it, on the morning after the stay ends. Nothing is worked out or added on, and a stay already paid in full is never charged.</p>
             <p>Clients who don&rsquo;t opt in pay you the way they do now. You can pause any one household, or press &ldquo;Stop charging saved cards&rdquo; to stop them all, and a client can stop it themselves at any time. If a card is declined, it is not tried again: the balance stays owed on that booking, and you collect it the way you usually would.</p>
             <p><strong>What clients see.</strong> In &ldquo;My bookings&rdquo; on your booking page, a deposit that is due shows its amount and a &ldquo;Pay deposit&rdquo; button, which opens Stripe&rsquo;s own payment page.</p>
             <p><strong>Turning it off.</strong> &ldquo;Disconnect Stripe&rdquo; removes saved cards, closes open payment links and stops any scheduled charges. Payments already made stay in your Stripe account.</p>
@@ -1877,7 +1759,7 @@ const GETTING_STARTED_HTML = `<!doctype html>
               <li>The first time, they are asked for a phone number if you have not added one, so you can reach them.</li>
               <li>They pick a service, the dates or a visit time, and their pets, see the price, answer your questions, and press &ldquo;Request Booking&rdquo;.</li>
               <li>Under &ldquo;My bookings&rdquo; they see each request as &ldquo;Awaiting confirmation&rdquo; until you confirm it, and they are emailed when you do. They can change or cancel their own bookings there.</li>
-              <li>On Pro, they can ask the chat on your booking page, or message your WhatsApp number, instead.</li>
+              <li>On Pro, they can message your WhatsApp number instead.</li>
               <li>On the booking page a client picks each date; there are no repeating bookings there yet. On Pro they can ask the assistant for every Tuesday and Thursday until the end of November, say. It lists each date with its price for them to approve, up to 60 at a time, every one still comes to you to confirm, and they can cancel the rest of a run the same way.</li>
             </ul>
           </div>
@@ -1891,7 +1773,7 @@ const GETTING_STARTED_HTML = `<!doctype html>
             <p><strong>My dashboard is read-only.</strong> Your plan has lapsed. Start one under &ldquo;Your plan&rdquo;; your bookings, clients and pets are untouched.</p>
             <p><strong>WhatsApp alerts aren&rsquo;t arriving.</strong> Check the WhatsApp section for its status line: alerts need an admin number you have proven, and Meta&rsquo;s approval of your message wording.</p>
             <p><strong>Anything else.</strong> Email <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}?subject=Pawservation%20support">${htmlEscape(SUPPORT_EMAIL)}</a> and say which business you run. A person reads it.</p>
-            <p>Want the bigger picture first? Read the <a href="/how-it-works">full tour</a>, or try the <a href="/demo">demo</a>: a made-up sitter&rsquo;s account, so there is nothing to sign up for and nothing you can break.</p>
+            <p>Want the bigger picture first? Read the <a href="/how-it-works">full tour</a>, or try the <a href="/demo">demo</a>: a made-up sitter&rsquo;s booking page, so there is nothing to sign up for and nothing you can break.</p>
           </div>
         </div>
       </section>
