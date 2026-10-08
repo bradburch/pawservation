@@ -15,6 +15,22 @@ export const PRICING = {
 } as const;
 
 /**
+ * Fill a static page's price placeholders from `PRICING`. demo.html is built by Vite rather than
+ * rendered by the worker, so it cannot interpolate the constant; `vite.config.ts` runs every page
+ * through this instead, and the page carries `%PRICING_SOLO_MONTHLY%` / `%PRICING_PRO_MONTHLY%`
+ * where a figure goes. A placeholder left over is a typo, and it throws so the build fails rather
+ * than shipping the token as text.
+ */
+export function fillPlanPrices(html: string): string {
+  const filled = html
+    .replaceAll('%PRICING_SOLO_MONTHLY%', String(PRICING.soloMonthly))
+    .replaceAll('%PRICING_PRO_MONTHLY%', String(PRICING.proMonthly));
+  const left = filled.match(/%PRICING_[A-Z_]*%/);
+  if (left) throw new Error(`Unknown price placeholder ${left[0]}`);
+  return filled;
+}
+
+/**
  * THE price sentence. Every surface that states both plans states them in these words, so the tour,
  * the setup guide, the landing pricing section and the product llms.txt cannot drift into four
  * phrasings of one fact. Both plans are one sitter: an account is one person's book, and extra

@@ -72,6 +72,19 @@ UPDATE Tenants SET MaxAdvanceMonths = 6 WHERE Id = 'tnt_happytails';
 -- the horizon above is not one value three times — a knob shown at a single setting is not shown.
 UPDATE Tenants SET HousesitBoardingOverlapDays = 0 WHERE Id = 'tnt_pawsandrelax';
 
+-- THE TWO /demo SITTERS' PLANS (0010, 0018). demo.html tells a visitor that Sunny Paws is on Pro and
+-- Happy Tails on Solo, and these two statements are what make that true. Pro is the platform
+-- owner's PAID comp (PremiumUntil), which turns on `/config`'s premium flags; Solo is the BASIC
+-- comp (CompedUntil), a current plan with no premium. Each clears the other's grant, so a demo
+-- sitter is one plan and never both. Plan/BilledUntil stay NULL: they are billing's alone, and
+-- nobody pays for a demo. Both are a CURRENT plan, so PLAN_ENFORCE never makes a demo dashboard
+-- read-only. `datetime('now', ...)` is the stored instant shape, and ten years ahead means a
+-- re-seed is never what keeps the demo on its plan.
+UPDATE Tenants SET PremiumUntil = datetime('now', '+10 years'), CompedUntil = NULL
+  WHERE Id = 'tnt_sunnypaws';
+UPDATE Tenants SET CompedUntil = datetime('now', '+10 years'), PremiumUntil = NULL
+  WHERE Id = 'tnt_happytails';
+
 -- PET-SET PRICING MODE (0005). sql/seed.sql's services predate PetRateMode and default to
 -- 'exact' — refuse a priced quote for any 2+-pet set with no stored group/mix rate. That is the
 -- right behaviour for a legacy row, and it is also what `POST /:slug/admin/services` STOPPED

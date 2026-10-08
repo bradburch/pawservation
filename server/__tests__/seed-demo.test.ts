@@ -14,6 +14,7 @@ import {
 import type { CapacityRequest, ServiceQuestion } from '../../src/shared/index.js';
 import { getTenantBySlug, listCapacityRows, listServices } from '../db/repo';
 import { monthAvailability, rowsToCapacityEvents, type MonthDay } from '../lib/availability';
+import { isCompActive, isPlanCurrent, isPremiumActive } from '../lib/premium';
 import type { Tenant, TenantService, TenantServiceOption } from '../types';
 
 /**
@@ -275,16 +276,19 @@ describe('sql/seed-demo.sql — shape', () => {
     // Seed a FOURTH tenant — unrelated to the three this file knows about — with its own services,
     // apply seed-demo.sql, and prove those rows survive unchanged. EVERY column this file UPDATEs
     // needs a witness here, seeded to a DIFFERENT value than any statement would write, so an
-    // unscoped write is visible rather than accidentally idempotent: Tenants.MaxAdvanceMonths and
-    // Tenants.HousesitBoardingOverlapDays,
+    // unscoped write is visible rather than accidentally idempotent: Tenants.MaxAdvanceMonths,
+    // Tenants.HousesitBoardingOverlapDays, Tenants.PremiumUntil and Tenants.CompedUntil,
     // plus PetRateMode / MinLeadDays / MaxNights / MaxPetCount / MaxConcurrentPets /
     // CancellationTiers / HolidayRate / Questions and an AcceptedPetTypes row for each of the
     // three acceptance writes (dog-only, cat-only, and the NULL that opens house sitting).
     const { raw } = createTestEnv(); // base seed only — demoActivity applied by hand below
     raw
       .prepare(
-        `INSERT INTO Tenants (Id, Slug, DisplayName, MaxAdvanceMonths, HousesitBoardingOverlapDays)
-         VALUES ('tnt_other', 'other-co', 'Other Co', 3, 2)`,
+        `INSERT INTO Tenants
+           (Id, Slug, DisplayName, MaxAdvanceMonths, HousesitBoardingOverlapDays, PremiumUntil,
+            CompedUntil)
+         VALUES ('tnt_other', 'other-co', 'Other Co', 3, 2, '2001-01-01 00:00:00',
+                 '2002-02-02 00:00:00')`,
       )
       .run();
     const addService = (type: string, accepted: string | null) =>
@@ -308,10 +312,16 @@ describe('sql/seed-demo.sql — shape', () => {
     expect(
       raw
         .prepare(
-          `SELECT MaxAdvanceMonths, HousesitBoardingOverlapDays FROM Tenants WHERE Id = 'tnt_other'`,
+          `SELECT MaxAdvanceMonths, HousesitBoardingOverlapDays, PremiumUntil, CompedUntil
+             FROM Tenants WHERE Id = 'tnt_other'`,
         )
         .get(),
-    ).toEqual({ MaxAdvanceMonths: 3, HousesitBoardingOverlapDays: 2 });
+    ).toEqual({
+      MaxAdvanceMonths: 3,
+      HousesitBoardingOverlapDays: 2,
+      PremiumUntil: '2001-01-01 00:00:00',
+      CompedUntil: '2002-02-02 00:00:00',
+    });
     const untouched = {
       PetRateMode: 'exact',
       MinLeadDays: 9,
@@ -714,4 +724,36 @@ describe('sql/seed-demo.sql — time stability sweep', () => {
     // 900 fixture rebuilds is ~2.5s alone and more under the suite's parallelism — comfortably
     // inside this, and far outside Vitest's 5s default.
   }, 60_000);
+});
+
+describe('sql/seed-demo.sql — one /demo sitter on Solo, one on Pro', () => {
+  // demo.html tells a visitor Sunny Paws is on Pro and Happy Tails is on Solo; this is the data
+  // that makes that line true. Both hold a CURRENT plan, or `PLAN_ENFORCE` would make the demo
+  // dashboards read-only. Pro is the owner's paid comp (`PremiumUntil`) and Solo the basic comp
+  // (`CompedUntil`): `Plan`/`BilledUntil` are billing's alone, and the demo pays nobody.
+  const tenant = async (slug: string) => {
+    const { env } = createTestEnv({ demoActivity: true });
+    return (await getTenantBySlug(env.PAWSERVATION_DB, slug))!;
+  };
+
+  it('Sunny Paws is Pro: premium on /config, and a current plan', async () => {
+    const t = await tenant('sunny-paws');
+    expect(isPremiumActive(t)).toBe(true);
+    expect(isPlanCurrent(t)).toBe(true);
+    const { env } = createTestEnv({ demoActivity: true });
+    const res = await app.request('/api/sunny-paws/config', {}, env);
+    const body = (await res.json()) as { premium: { chat: boolean } };
+    expect(body.premium.chat).toBe(true);
+  });
+
+  it('Happy Tails is Solo: a current basic comp and no premium', async () => {
+    const t = await tenant('happy-tails');
+    expect(isPremiumActive(t)).toBe(false);
+    expect(isCompActive(t)).toBe(true);
+    expect(isPlanCurrent(t)).toBe(true);
+    const { env } = createTestEnv({ demoActivity: true });
+    const res = await app.request('/api/happy-tails/config', {}, env);
+    const body = (await res.json()) as { premium: { chat: boolean } };
+    expect(body.premium.chat).toBe(false);
+  });
 });

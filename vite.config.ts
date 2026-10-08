@@ -1,9 +1,17 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
+import { fillPlanPrices } from './server/lib/plan-pricing';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // demo.html states the plan prices; this fills them from PRICING so no figure is typed there.
+    {
+      name: 'plan-prices',
+      transformIndexHtml: { order: 'pre', handler: (html: string) => fillPlanPrices(html) },
+    },
+  ],
   build: {
     rollupOptions: {
       input: {
