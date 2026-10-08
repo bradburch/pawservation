@@ -51,8 +51,28 @@ describe('landing wording', () => {
     return res.text();
   };
 
-  it('serves no HTML comments', async () => {
-    expect(await landing()).not.toContain('<!--');
+  it('serves no HTML comments on any public page, the sent page or the demo', async () => {
+    // Internal notes belong in TS comments outside the template, where they are never served.
+    const { env } = createTestEnv();
+    for (const path of [
+      '/',
+      '/how-it-works',
+      '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
+      '/about',
+      '/contact',
+      '/privacy',
+      '/terms',
+      '/signup',
+      '/signup/sent',
+    ]) {
+      const res = await app.request(path, {}, env);
+      expect(res.status, path).toBe(200);
+      expect(await res.text(), path).not.toContain('<!--');
+    }
+    // /demo is a Vite-built page served from ASSETS, which the test env stubs, so read its source.
+    expect(readFileSync(join(ROOT, 'demo.html'), 'utf8'), '/demo').not.toContain('<!--');
   });
 
   it('gives the three helpers three names', async () => {

@@ -91,6 +91,9 @@ async function plan(env: Env, email: string, mode: SignupMode): Promise<Plan> {
   return { link: { kind: 'sitter' }, notice: 'open' };
 }
 
+// noindex: the sign-up pages are transactional, not landing targets, and a searcher who lands on
+// a confirmation has arrived at a dead end. Kept crawlable so the tag is read; see
+// public/robots.txt for why a Disallow would defeat it.
 function shell(title: string, body: string, opts: { turnstile?: boolean } = {}): string {
   return `<!doctype html>
 <html lang="en">
@@ -98,9 +101,6 @@ function shell(title: string, body: string, opts: { turnstile?: boolean } = {}):
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${title}</title>
-    <!-- Transactional, not a landing target: the homepage carries the same form, and a searcher
-         who lands on a confirmation has arrived at a dead end. Kept crawlable so this tag is read;
-         see public/robots.txt for why a Disallow would defeat it. -->
     <meta name="robots" content="noindex" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

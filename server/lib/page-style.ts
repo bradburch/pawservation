@@ -4,7 +4,7 @@
  * without an import cycle (index.ts
  * mounts those routes, so the routes module cannot import back from index.ts).
  */
-export const PAGE_STYLE = /* css */ `
+const RAW = /* css */ `
       /* Brand face for the nav wordmark only: a 1.3KB self-hosted subset ("Pawservation"
          glyphs), so it can never slow the page or leak a request off-origin. */
       @font-face {
@@ -1221,3 +1221,10 @@ export const PAGE_STYLE = /* css */ `
         .signup-form { grid-template-columns: 1fr 1fr; }
       }
 `;
+
+/**
+ * What the pages serve: RAW with its comments stripped, so the notes above stay in the source and
+ * never reach a visitor. Safe as a regex because no CSS string in RAW contains `/*`
+ * (page-style.test.ts checks the served sheet).
+ */
+export const PAGE_STYLE = RAW.replace(/\/\*[\s\S]*?\*\//g, '');

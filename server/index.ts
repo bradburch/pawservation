@@ -822,6 +822,24 @@ const LANDING_HTML = `<!doctype html>
  * is multiplied, ever"), which stopped being true the day PetRateMode shipped. The developer nouns
  * "idempotency"/"machine-readable"/"llms.txt" stay out of the body copy; the concepts live in the
  * language a pet sitter uses.
+ *
+ * Notes on the markup, kept here so none of them is served:
+ * - `.nav-links-5`: the header carries five links and the same right-hand pair the landing does,
+ *   and it wrapped onto a second line from 780px to 829px. The class is the row tuning that already
+ *   exists for a five-link header rather than a second copy of it; its measurements are in
+ *   PAGE_STYLE.
+ * - The screenshots are the landing page's own, already inside its weight budget; how to retake
+ *   them is in docs/landing-screenshots.md.
+ * - `#pro` states what Pro adds in the landing page's own words. The assistant leads because it is
+ *   the time back; card payments are one card, not the headline. The Stripe arrangement itself is
+ *   stated ONCE on this page, in the Services aside, so the card names only the fee terms
+ *   (how-it-works.test.ts counts it). Not a nav destination: the five-link row is measured for five.
+ * - `#limits` is the honesty section. Each line is a plain limit a sitter would otherwise meet
+ *   after paying, and several are pinned from landing.test.ts as well as this page's own test,
+ *   because the landing page dropped its FAQ and these are where those answers went.
+ * - The four rules moved there from /about on 2026-09-09, when the owner narrowed that page to why
+ *   it exists and who made it. They are stated on no other page. The money rule states what the
+ *   Services aside does not (no cut, no funds held, on either plan) and stops.
  */
 const HOW_IT_WORKS_HTML = `<!doctype html>
 <html lang="en">
@@ -842,10 +860,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
-        <!-- .nav-links-5: this row carries five links and the same right-hand pair the landing
-             does, and it wrapped onto a second line from 780px to 829px. The class is the row
-             tuning that already exists for a five-link header rather than a second copy of it;
-             its measurements are in PAGE_STYLE. -->
         <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="#booking">Requests</a>
           <a href="#confirm">Confirming</a>
@@ -918,8 +932,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>A client who wants a walk every Tuesday picks each Tuesday there, and there is no &ldquo;repeat weekly&rdquo; to set. On Pro they can ask the assistant instead, for every Tuesday and Thursday until the end of November, say: it lists each date with its price for them to approve, up to 60 dates at a time, and every one still comes to you to confirm. They can cancel the rest of a run the same way.</p>
             </div>
           </div>
-          <!-- The landing page's own screenshots, captured from the seeded demo (fixed 2028
-               months, never "today") and already inside its weight budget. -->
           <ol class="steps">
             <li class="step-card">
               <div class="frame">
@@ -1095,11 +1107,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- What Pro adds, in the landing page's own words (#pro there). The assistant leads because
-           it is the time back; card payments are one card, not the headline. The Stripe
-           arrangement itself is stated ONCE on this page, in the Services aside above, so the
-           card here names only the fee terms (how-it-works.test.ts counts it). Not a nav
-           destination: the five-link row is measured for five. -->
       <section class="section" id="pro" aria-labelledby="pro-h">
         <div class="wrap">
           <div class="section-head">
@@ -1164,9 +1171,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- The honesty section. Each line is a plain limit a sitter would otherwise meet after
-           paying, and several of them are pinned from landing.test.ts as well as this page's own
-           test, because the landing page dropped its FAQ and these are where those answers went. -->
       <section class="section" id="limits" aria-labelledby="limits-h">
         <div class="wrap">
           <div class="section-head">
@@ -1188,14 +1192,6 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p>Under Business in your dashboard, Export your data gives you four downloads: clients, pets, bookings and payments, as ordinary CSVs that open in Excel, Numbers or Google Sheets. Cancelled bookings, declined requests and pets who have died are all there with their status in a column.</p>
             <p>These are your records. Your settings stay here, meaning your services, rates, cancellation policies and questions, and so does your time off, which is in none of the four files. It goes one way only: there is nothing scheduled to set up, and no way to load one of these files back in.</p>
           </div>
-          <!-- The four rules moved here from /about on 2026-09-09, when the owner narrowed that
-               page to why it exists and who made it. They are stated on no other page, so this was
-               a move and not a delete, and the honesty section is where a sitter is already being
-               told what the software will and will not do. The money rule is the one sentence-level
-               edit: the Services aside above it already says, in words how-it-works.test.ts pins,
-               that payment stays between her and her client and where a Pro card is processed, so
-               the rule states what that aside does not (no cut, no funds held, on either plan) and
-               stops. -->
           <div class="wf-math">
             <h3 class="wf-h">Four rules the software will not break</h3>
             <div class="wf-pair">
@@ -1455,6 +1451,14 @@ const TERMS_HTML = `<!doctype html>
  * because it is wayfinding for a reader who has finished this page rather than a pitch. That
  * removal also took the page's only statements that this is a small independent product with no
  * sales team and that questions reach a person; /contact still says both, in its own words.
+ *
+ * Notes on the markup, kept here so none of them is served:
+ * - `.nav-links-5`: the same five-link row the tour carries, with the same row-tuning class. The
+ *   first three hrefs are absolute (/#how, /#pro, /#pricing) rather than the landing header's bare
+ *   fragments, because there is no #how/#pro/#pricing section on this page, only on /.
+ * - `.hero-flush`: this hero is the top of one continuous page rather than the first of several
+ *   bands, so the hero's bottom padding and the next section's top padding are both dropped and
+ *   the .sub's own margin becomes the gap.
  */
 const ABOUT_HTML = `<!doctype html>
 <html lang="en">
@@ -1475,13 +1479,6 @@ const ABOUT_HTML = `<!doctype html>
           <img src="/brand/calendar.svg" width="30" height="28" alt="" />
           Pawservation
         </a>
-        <!-- .nav-links-5: the same five-link row the landing header carries, with the same
-             row-tuning class, because it is a third row measured at five links plus "Sign in"
-             plus "Try the demo": the .how-it-works shape, not the landing page's four-item
-             .nav-right. The first three hrefs are absolute (/#how, /#pro, /#pricing)
-             rather than the landing header's bare fragments, because a fragment link on this
-             page would scroll nowhere: there is no #how/#pro/#pricing section here, only
-             on /. -->
         <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="/#how">How it works</a>
           <a href="/#pro">WhatsApp</a>
@@ -1497,9 +1494,6 @@ const ABOUT_HTML = `<!doctype html>
     </header>
 
     <main>
-      <!-- .hero-flush: this hero is the top of one continuous page rather than the first of
-           several bands, so the hero's bottom padding and the next section's top padding are both
-           dropped and the .sub's own margin becomes the gap. -->
       <section class="hero hero-flush">
         <div class="wrap">
           <p class="chip">About</p>

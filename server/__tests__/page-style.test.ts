@@ -64,6 +64,15 @@ describe('PAGE_STYLE: one token set, light and dark', () => {
   const light = tokens(blocks[0] ?? '');
   const dark = tokens(DARK.exec(PAGE_STYLE)?.[1] ?? '');
 
+  it('serves no CSS comments: internal notes stay in the source', async () => {
+    expect(PAGE_STYLE).not.toContain('/*');
+    const { env } = createTestEnv();
+    const body = await (await app.request('/', {}, env)).text();
+    const style = body.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
+    expect(style.length).toBeGreaterThan(1000);
+    expect(style).not.toContain('/*');
+  });
+
   it('has exactly two :root blocks, the second under prefers-color-scheme: dark', () => {
     expect(blocks.length).toBe(2);
     expect(DARK.test(PAGE_STYLE)).toBe(true);
