@@ -41,6 +41,8 @@ export function pageFooter(): string {
               <li><a href="/admin">Sitter sign in</a></li>
               <li><a href="/how-it-works">Full tour</a></li>
               <li><a href="/getting-started">Setup guide</a></li>
+              <li><a href="/getting-started/whatsapp">WhatsApp guide</a></li>
+              <li><a href="/getting-started/card-payments">Card payments guide</a></li>
               <li><a href="/#pricing">Pricing</a></li>
             </ul>
           </div>

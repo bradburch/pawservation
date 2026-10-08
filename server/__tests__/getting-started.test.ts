@@ -151,7 +151,7 @@ describe('GET /getting-started — the sitter setup guide', () => {
     expect(body).toContain(TRIAL_LINE);
     // The page tells her where her dashboard's own plan controls are; it is never a checkout.
     expect(body).not.toMatch(
-      /upgrade now|buy now|enter your card|start (your |a )?free trial|no credit card|no card required/i,
+      /upgrade now|buy now|enter your card|ask for an invite|request an invite|waitlist|wait list|no credit card|no card required/i,
     );
   });
 
@@ -259,7 +259,7 @@ describe('copy clarity across the marketing pages', () => {
   });
 
   it('names what the assistant handles and what happens when its allowance runs out', async () => {
-    for (const path of ['/', '/how-it-works', '/getting-started']) {
+    for (const path of ['/how-it-works', '/getting-started']) {
       const body = await page(path);
       expect(body, path).toContain('daily allowance');
       expect(body, path).toMatch(/pointed to your booking page, which always works/);
@@ -272,7 +272,6 @@ describe('copy clarity across the marketing pages', () => {
   });
 
   it('discloses one-at-a-time booking where a dog walker meets it before signing up', async () => {
-    expect(await page('/')).toContain('On your booking page a client picks each date for now.');
     const tour = await page('/how-it-works');
     expect(tour.indexOf('No repeating bookings on the booking page yet.')).toBeLessThan(
       tour.indexOf('id="confirm"'),

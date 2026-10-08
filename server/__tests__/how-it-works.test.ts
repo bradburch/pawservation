@@ -491,7 +491,7 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).toContain(PRICE_LINE);
     expect(body).toContain(TRIAL_LINE);
     expect(body).not.toMatch(
-      /upgrade now|buy now|subscribe|enter your card|start (your |a )?free trial|no credit card|no card required/i,
+      /upgrade now|buy now|subscribe|enter your card|ask for an invite|request an invite|waitlist|wait list|no credit card|no card required/i,
     );
   });
 
@@ -697,13 +697,13 @@ describe('the landing page claims only what ships', () => {
     expect(body).not.toContain('Available now');
     expect(body).toContain('<h3>Solo</h3>');
     expect(body).toContain('<h3>Pro</h3>');
-    // There is no billing code in this repo. The invite form is the only call to action either
-    // card offers, so nothing here may read as a purchase the visitor can complete. The trial is
-    // stated as a fact and never offered as a flow, for the same reason: "start your free trial"
-    // and "no credit card required" are both promises about a checkout that does not exist, and
-    // the second one describes a card step nothing in this repo could ask for or skip.
+    // There is no billing code in this repo. Sign-up is the only call to action either card
+    // offers, so nothing here may read as a purchase the visitor can complete: "no credit card
+    // required" describes a card step nothing in this repo could ask for or skip. The owner let the
+    // hero button name the trial on 2026-10-08 ("Start your 30-day free trial" leads to the same
+    // sign-up), so that phrase left this list and the retired invite wording joined it.
     expect(body).not.toMatch(
-      /upgrade now|buy now|subscribe|enter your card|start (your |a )?free trial|no credit card|no card required/i,
+      /upgrade now|buy now|subscribe|enter your card|ask for an invite|request an invite|waitlist|wait list|no credit card|no card required/i,
     );
   });
 

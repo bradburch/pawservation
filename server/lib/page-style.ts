@@ -353,7 +353,10 @@ export const PAGE_STYLE = /* css */ `
          set, so the two can never drift into two shades of underline. */
       .note a,
       .legal p a,
-      .legal li a {
+      .legal li a,
+      .section-head p a,
+      .feature p a,
+      .faq-a a {
         color: var(--ink);
         text-decoration: underline;
         text-decoration-color: var(--link);
@@ -404,20 +407,24 @@ export const PAGE_STYLE = /* css */ `
         font-size: 0.78rem;
         line-height: 1.45;
       }
-      .req-card .req-label {
+      .req-card .req-label,
+      .alert-card .req-label {
         font-weight: 700;
         font-size: 0.68rem;
         text-transform: uppercase;
         letter-spacing: 0.07em;
         color: var(--link);
       }
-      .req-card .req-what { color: var(--ink); font-weight: 600; }
-      .req-card .req-btns {
+      .req-card .req-what,
+      .alert-card .req-what { color: var(--ink); font-weight: 600; }
+      .req-card .req-btns,
+      .alert-card .req-btns {
         display: flex;
         gap: 6px;
         margin-top: 8px;
       }
-      .req-card .req-btns span {
+      .req-card .req-btns span,
+      .alert-card .req-btns span {
         flex: 1;
         text-align: center;
         padding: 5px 0;
@@ -784,11 +791,10 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 700;
         color: var(--ink);
       }
-      /* The closing line under a section's columns: the invite line under the two price cards. */
+      /* The closing line under a section's columns: the trial line under the two price cards. */
       .wf-more { margin-top: 24px; }
-      /* Two mid-page invitations, under the client section and under the dashboard: the page
-         exists to get a sitter to ask for an invite, and the hero and the closing panel were the
-         only two places she could. */
+      /* Mid-page sign-up buttons, under the WhatsApp and client sections: without them the hero
+         and the closing panel were the only two places a sitter could sign up. */
       .mid-cta { margin-top: 28px; margin-bottom: 0; }
 
       /* ── Install ────────────────────────────────────────────────── */
@@ -902,6 +908,145 @@ export const PAGE_STYLE = /* css */ `
       @media (min-width: 780px) {
         .price-grid { grid-template-columns: 1fr 1fr; }
       }
+
+      /* ── On Pro: the WhatsApp example, coded ──────────────────────── */
+      /* A phone drawn in CSS on the page's own tokens, never WhatsApp's logo or brand green. It is
+         one illustration to a screen reader (role="img" with the whole conversation in its
+         aria-label, the bubbles aria-hidden). One column, the phone centred at up to 340px; from
+         880px the phone sits left and the three points beside it. */
+      .pro-grid {
+        display: grid;
+        gap: 40px;
+        align-items: center;
+      }
+      .pro-points { display: grid; gap: 24px; }
+      .pro-points .note { max-width: none; }
+      .phone {
+        width: 100%;
+        max-width: 340px;
+        margin: 0 auto;
+        padding: 18px 14px 20px;
+        border: 10px solid var(--phone);
+        border-radius: 32px;
+        background: var(--panel);
+        box-shadow: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
+      }
+      .phone > div { display: flex; flex-direction: column; gap: 8px; }
+      .phone-cap {
+        margin: 8px 0 0;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--soft);
+      }
+      .phone-cap:first-child { margin-top: 0; }
+      .bubble {
+        margin: 0;
+        max-width: 85%;
+        padding: 8px 12px;
+        border-radius: 16px;
+        font-size: 0.88rem;
+        line-height: 1.45;
+        color: var(--ink);
+        box-shadow: 0 1px 1px var(--shadow);
+      }
+      .bubble-in {
+        align-self: flex-start;
+        background: var(--bubble-in);
+        border-bottom-left-radius: 4px;
+      }
+      .bubble-out {
+        align-self: flex-end;
+        background: var(--bubble-out);
+        border-bottom-right-radius: 4px;
+      }
+      /* The hero's request card, standing in the flow rather than floating over a screenshot. */
+      .alert-card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+      .alert-card > span { display: block; }
+      .pro-also { margin: 56px 0 20px; }
+      @media (min-width: 880px) {
+        .pro-grid { grid-template-columns: minmax(0, 340px) 1fr; gap: 56px; }
+      }
+      /* Two cards read as a pair: the three-column default would leave an empty third column. */
+      @media (min-width: 960px) { .features-2 { grid-template-columns: 1fr 1fr; } }
+
+      /* ── Plan badge and tagline ─────────────────────────────────── */
+      .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: var(--chip-bg);
+        color: var(--chip-ink);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .price-tag {
+        margin: -6px 0 16px;
+        font-size: 0.92rem;
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      /* ── Who's behind it ────────────────────────────────────────── */
+      .story-head { margin-bottom: 0; }
+      .quote {
+        margin: 20px 0;
+        padding: 18px 20px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .quote blockquote {
+        margin: 0 0 8px;
+        font-family: var(--display);
+        font-size: 1.1rem;
+        color: var(--ink);
+      }
+      .quote figcaption { font-size: 0.84rem; color: var(--soft); }
+
+      /* ── Questions: native details, so no script ───────────────── */
+      /* minmax(0, 1fr): the snippet's <pre> is max-content wide, and an auto track would grow to
+         it and push the page sideways on a phone; its own .code-scroll scrolls instead. */
+      .faq-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; max-width: 760px; }
+      .faq-item {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .faq-item summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 48px;
+        padding: 12px 18px;
+        cursor: pointer;
+        list-style: none;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .faq-item summary::-webkit-details-marker { display: none; }
+      .faq-item summary::after {
+        content: "+";
+        flex: none;
+        font-size: 1.3rem;
+        line-height: 1;
+        color: var(--link);
+      }
+      .faq-item[open] summary::after { content: "\\2212"; }
+      .faq-a { padding: 0 18px 18px; }
+      .faq-a p { margin: 0 0 12px; font-size: 0.94rem; max-width: 64ch; }
+      .faq-a p:last-of-type { margin-bottom: 0; }
+      .faq-a .codecard { margin-top: 16px; }
 
       /* ── CTA band ───────────────────────────────────────────────── */
       .cta-band { padding: 40px 0 96px; }

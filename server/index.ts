@@ -14,6 +14,7 @@ import { tenantMiddleware } from './lib/middleware';
 import { pageFooter, pageHead, STRIPE_LINK } from './lib/page-chrome';
 import { PAGE_STYLE } from './lib/page-style';
 import { PRICE_LINE, PRICING, TRIAL_LINE } from './lib/plan-pricing';
+import { testimonialsHtml } from './lib/testimonials';
 import { premiumOrigin } from './lib/premium';
 import { resolveTenant } from './lib/tenant-resolve';
 import {
@@ -262,12 +263,13 @@ app.get('/setup.html', page('setup.html'));
 
 /**
  * Root landing page: a marketing page for prospective pet sitters, built around real
- * screenshots of the seeded demo (public/img/landing/*.webp). Script-free (served under
- * LOCKED_CSP, so only inline styles and same-origin images are allowed — NO <script>, no external
- * fonts/CSS/images) apart from the analytics beacon `marketingHtml` may append, so it needs no
- * build step. There is no interactivity at all. Its "Sign up" links are rewritten per request (the
- * route below) to carry the visitor's already-cleaned attribution to /signup.
- * The embed snippet below is shown as escaped text (&lt;script&gt;…) so the served body
+ * screenshots of the seeded demo (public/img/landing/*.webp) and two coded mocks (the WhatsApp
+ * phone and the dashboard's bookings queue). Script-free (served under LOCKED_CSP, so only inline
+ * styles and same-origin images are allowed: NO <script>, no external fonts/CSS/images) apart from
+ * the analytics beacon `marketingHtml` may append, so it needs no build step. The FAQ is native
+ * <details>, which opens without script. Its "Sign up" links are rewritten per request (the route
+ * below) to carry the visitor's already-cleaned attribution to /signup.
+ * The embed snippet in the FAQ is shown as escaped text (&lt;script&gt;…) so the served body
  * genuinely contains no <script tag. Screenshot regeneration recipe (fixed 2028 seed months):
  * docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md.
  */
@@ -279,7 +281,7 @@ const LANDING_HTML = `<!doctype html>
     ${pageHead(
       '/',
       'Pet Sitting &amp; Dog Walking Software | Pawservation',
-      `Booking software for pet sitters and dog walkers, from $${PRICING.soloMonthly} a month, that answers your clients&rsquo; routine questions so you can spend your day on the pets. Clients book on your own website or from a link you send them, so no website is needed, and on Pro they can book by WhatsApp. You confirm every booking.`,
+      `Booking software for pet sitters and dog walkers, from $${PRICING.soloMonthly} a month. Clients check your dates, see your prices and ask to book from a link you send, or on Pro by WhatsApp. You confirm every booking.`,
     )}
     ${buildProductJsonLdScript(BRAND_ORIGIN)}
     <style>${PAGE_STYLE}</style>
@@ -293,7 +295,7 @@ const LANDING_HTML = `<!doctype html>
         </a>
         <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="#how">How it works</a>
-          <a href="#dashboard">Dashboard</a>
+          <a href="#pro">WhatsApp</a>
           <a href="#pricing">Pricing</a>
           <a href="/how-it-works">Full tour</a>
           <a href="/about">About</a>
@@ -323,31 +325,34 @@ const LANDING_HTML = `<!doctype html>
           <div class="hero-copy">
             <!-- The chip is the price, not the category: the h1 and the sub below already say
                  what this is, and a shopper arrives holding an incumbent's monthly figure. The
-                 words are the pricing section's own heading, so the hero and section five cannot
-                 drift apart, and every figure comes from PRICING rather than the markup. -->
+                 words are the pricing section's own heading, so the hero and the pricing section
+                 cannot drift apart, and every figure comes from PRICING rather than the markup. -->
             <p class="chip">$${PRICING.soloMonthly} a month. ${PRICING.trialDays}-day free trial.</p>
-            <h1>Less time answering texts. More time with the pets.</h1>
+            <h1>Spend less time on booking texts and more time with the pets.</h1>
             <p class="sub">
-              Pawservation is pet sitting and dog walking software. Your booking page answers the
-              questions clients ask you all day, like which days you&rsquo;re free and what a stay
-              costs, and on Pro a friendly assistant answers the rest, from moving a date to what
-              they owe. You still confirm every booking, so the relationship stays yours.
+              Clients check your open days, see your prices and ask to book from one link you send
+              them. On Pro they can simply message you on WhatsApp, and a friendly assistant answers.
+              You confirm every booking with one tap.
             </p>
+            <!-- The one button on the page that names the trial (owner, 2026-10-08). Every other
+                 button, the nav's included, reads "Sign up": the nav is one row on measured
+                 breakpoints, and the rest sit beside the price that explains them. -->
             <div class="cta-row">
-              <a class="btn btn-primary" href="/signup">Sign up</a>
+              <a class="btn btn-primary" href="/signup">Start your ${PRICING.trialDays}-day free trial</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
             <p class="note">
-              The demo is there so you can poke around without signing up for anything.
-              When you&rsquo;re ready, <a href="/signup">sign up</a> with just your email, or
-              <a href="/admin">sign in</a> if you already have an account.
+              <a href="/signup">Sign up</a> with just your email. No card needed to start. The demo
+              lets you book as a client without signing up for anything. Have an account?
+              <a href="/admin">Sign in</a>.
             </p>
           </div>
           <div class="hero-visual">
             <!-- Screenshots are captured from the seeded demo (fixed 2028 months, never
                  "today"). Regenerate via the recipe in
                  docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md whenever the
-                 widget's look changes. -->
+                 widget's look changes. The card's three nights at $150 is the screenshot's own
+                 quote, and the WhatsApp example in #pro tells the same stay. -->
             <div class="visual-panel">
               <div class="screen">
                 <img
@@ -369,21 +374,19 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- Who it is for, said once and plainly: one sitter or walker with a regular book of about
-           ten to twenty clients. Each card is something that sitter does today by text and what
-           changes, with no figure the product cannot back. A band, so the sections below keep
-           alternating. -->
+      <!-- Who it is for, in her clients' own words: each card is a question she answers by text
+           today and what answers it instead, with no figure the product cannot back. -->
       <section class="section band" id="fit" aria-labelledby="fit-h">
         <div class="wrap">
           <div class="section-head">
-            <span class="label">Is this for you?</span>
-            <h2 id="fit-h">Made for a sitter with ten to twenty regular clients</h2>
-            <p>If you walk dogs or pet sit on your own, and most of your week is the same households asking the same questions, this is for you.</p>
+            <span class="label">Sound familiar?</span>
+            <h2 id="fit-h">Built for sitters and walkers who run the business themselves</h2>
+            <p>If most of your week is the same households asking the same questions, your booking page can answer them for you.</p>
           </div>
           <div class="features features-3">
             <div class="feature">
               <h3>&ldquo;Are you free the weekend of the 14th?&rdquo;</h3>
-              <p>Your clients see your open days for themselves, so the question never has to reach you.</p>
+              <p>Clients see your open days for themselves, so the question never reaches your phone.</p>
             </div>
             <div class="feature">
               <h3>&ldquo;What would it be for both dogs?&rdquo;</h3>
@@ -391,36 +394,34 @@ const LANDING_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>&ldquo;Did I pay you for last week?&rdquo;</h3>
-              <p>Every household has one running balance, so you both see the same answer without scrolling back through texts.</p>
+              <p>Each household has one running balance, so you both see the same answer.</p>
             </div>
           </div>
-          <p class="note wf-more">Walk the same dogs every week? On your booking page a client picks each date for now. On Pro they can ask the assistant for every Tuesday and Thursday until the end of November instead, and each date still comes to you to confirm.</p>
         </div>
       </section>
 
-      <!-- Two first-class paths, not a website and a footnote: the booking page on her own site,
-           and no website at all. The link is the /embed/:slug page itself, the one og-booking.png
-           exists to unfurl when she texts it to a client. WhatsApp is the Pro half of the
-           no-website path, and the card says so. -->
+      <!-- Three first-class paths, not a website and two footnotes. The link is the /embed/:slug
+           page itself, the one og-booking.png exists to unfurl when she texts it to a client;
+           WhatsApp is the Pro path and says so. -->
       <section class="section" id="ways" aria-labelledby="ways-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">Website or not</span>
-            <h2 id="ways-h">Your clients book wherever they find you</h2>
-            <p>Put your booking page on your website, or skip the website. You don&rsquo;t need one, or any tech at all.</p>
+            <h2 id="ways-h">Clients book wherever they find you</h2>
+            <p>Send a link, use your website, or let them message you.</p>
           </div>
           <div class="features features-3">
             <div class="feature">
-              <h3>On your own website</h3>
-              <p>Paste <a href="#install">one line</a> into Squarespace, Wix or whatever you already use, and your booking page appears there under your name.</p>
+              <h3>No website needed</h3>
+              <p>You get a booking page of your own at a link. Text it, email it, or put it in your Instagram bio.</p>
             </div>
             <div class="feature">
-              <h3>No website needed</h3>
-              <p>You get a booking page of your own at a link you can text or email to clients. They open it and book, and there is nothing to build or host.</p>
+              <h3>On your own website</h3>
+              <p>Paste <a href="#faq-website">one line</a> into Squarespace, Wix or whatever you use, and your booking page appears there under your name.</p>
             </div>
             <div class="feature">
               <h3>By WhatsApp, on Pro</h3>
-              <p>Clients just message your WhatsApp number. The assistant answers, takes the request, and sends it to you to confirm.</p>
+              <p>Clients message your business number. The assistant answers and sends each request to you to confirm.</p>
             </div>
           </div>
         </div>
@@ -430,21 +431,21 @@ const LANDING_HTML = `<!doctype html>
         <div class="wrap">
           <div class="section-head">
             <span class="label">How it works</span>
-            <h2 id="how-h">Your clients book in three steps</h2>
-            <p>Your clients pick from the services you offer, on the days you can take them, and you have the final say on every request.</p>
+            <h2 id="how-h">Set it up once, then just tap Confirm</h2>
+            <p>You set your services and prices. Your clients do the rest, and you have the final say on every request.</p>
           </div>
           <ol class="steps">
             <li class="step-card">
               <div class="frame">
                 <img
                   src="/img/landing/step-services.webp"
-                  alt="The widget's service picker: Boarding selected from a row of services including House sitting, Daycare, Walk, Check-in, and Morning walk"
+                  alt="The booking page's service picker: Boarding selected from a row of a sitter's services, including House sitting, Daycare, Walk, Check-in and Morning walk"
                 />
               </div>
               <div class="step-body">
                 <span class="step-no">01</span>
-                <h3>They pick a service</h3>
-                <p>They choose from the services you set up, under your own names and your own prices.</p>
+                <h3>You set your services.</h3>
+                <p>Pick from walks, drop-in visits, boarding, house sitting and daycare, and type your prices.</p>
               </div>
             </li>
             <li class="step-card">
@@ -456,8 +457,8 @@ const LANDING_HTML = `<!doctype html>
               </div>
               <div class="step-body">
                 <span class="step-no">02</span>
-                <h3>They pick the dates</h3>
-                <p>The calendar shows the days you can take, counting the pets they picked, or a visit time for walks and drop-ins.</p>
+                <h3>Clients pick their dates.</h3>
+                <p>Your calendar shows only the days you can take, and the price shows before they ask.</p>
               </div>
             </li>
             <li class="step-card">
@@ -469,48 +470,99 @@ const LANDING_HTML = `<!doctype html>
               </div>
               <div class="step-body">
                 <span class="step-no">03</span>
-                <h3>They send the request, you confirm it</h3>
-                <p>The request reaches you with the dates, the pets and a price on it, and nothing is booked until you say so.</p>
+                <h3>You confirm with one tap.</h3>
+                <p>Each request reaches you with the dates, the pets and the price. Nothing is booked until you say yes.</p>
               </div>
             </li>
           </ol>
         </div>
       </section>
 
-      <!-- The relationship section: one booking read from the client's side. It was the ninth
-           FAQ answer for two rounds, which is the last place a reader looking for "what is this
-           like for my clients" would find it. It ran as a two-column "what they see / what you do"
-           grid until the owner cut it on 2026-09-09 for reading as filler. What is here is that
-           cut copy's own sentences, unchanged, re-laid as the .features cards #dashboard already
-           uses: the section had shrunk to a .section-head alone, which is a centred 60ch intro
-           block, so it read narrow and half-height beside its neighbours. The fix was the layout
-           and NOT the word count, and no claim was added to fill the row. Everything the page says
-           about a client changing or cancelling their own booking still lives HERE and nowhere
-           else, so the rule is read once, whole, rather than three times in fragments. -->
-      <section class="section" id="clients" aria-labelledby="clients-h">
+      <!-- Booking by WhatsApp is Pro's headline, shown rather than described: a coded phone (HTML
+           and CSS on the page's own tokens, never WhatsApp's logo or brand green) read as one
+           illustration through its aria-label. Its stay is the hero's three nights at $150. What
+           this section claims is the whole of the integration: nothing about photos, reminders or
+           the assistant booking on its own, and no number handed to her by us. Card payments and
+           the back-office assistant follow as the two "Also on Pro" cards. -->
+      <section class="section" id="pro" aria-labelledby="pro-h">
         <div class="wrap">
           <div class="section-head">
-            <span class="label">You and your clients</span>
-            <h2 id="clients-h">Your clients see what you see</h2>
-            <p>
-              Your clients see which dates you have open and what the stay costs before they ask for it.
-            </p>
+            <span class="label">On Pro</span>
+            <h2 id="pro-h">Let clients book you on WhatsApp</h2>
+            <p>Clients message your business number the way they&rsquo;d text you. A friendly assistant answers with your open dates and your prices, takes the request, and sends it to your own WhatsApp with Confirm and Decline buttons. Your client hears your answer right away.</p>
           </div>
-          <!-- .features-3 rather than bare .features: three cards in the grid's 640-959px
-               two-column band leave the third alone with an empty cell beside it. See PAGE_STYLE;
-               it reflows one-or-three like the .steps row further up this same page. -->
+          <div class="pro-grid">
+            <div class="phone" role="img" aria-label="Example WhatsApp conversation. A client asks whether Biscuit can board from Saturday the 14th to Tuesday the 17th. The assistant says the dates are open and the price is $150 for three nights, and offers to send the request. The sitter gets an alert with Confirm and Decline buttons.">
+              <div aria-hidden="true">
+                <p class="phone-cap">Example</p>
+                <p class="bubble bubble-in">Hi! Could you take Biscuit from Sat 14th to Tue 17th?</p>
+                <p class="bubble bubble-out">Hi Sam! Those dates are open. Boarding for Biscuit is $150 for 3 nights. Shall I send the request to Maya?</p>
+                <p class="bubble bubble-in">Yes please</p>
+                <p class="phone-cap">Your alert</p>
+                <div class="alert-card">
+                  <span class="req-label">New request from Sam</span>
+                  <span class="req-what">Boarding &middot; Sat 14 to Tue 17 &middot; $150</span>
+                  <span class="req-btns"><span class="req-yes">Confirm</span><span class="req-no">Decline</span></span>
+                </div>
+              </div>
+            </div>
+            <div class="pro-points">
+              <div class="feature">
+                <h3>Your number, your name</h3>
+                <p>Clients message a number that belongs to your business, and replies come under your business name.</p>
+              </div>
+              <div class="feature">
+                <h3>Answers at 10pm and mid-walk</h3>
+                <p>Routine questions get answered from your own rates and your own calendar while you&rsquo;re busy.</p>
+              </div>
+              <div class="feature">
+                <h3>You decide every booking</h3>
+                <p>Confirm or Decline straight from the alert, or later in your dashboard.</p>
+              </div>
+              <p class="note">Setting it up takes a Facebook login and a phone number for your business. <a href="/getting-started/whatsapp">See what you need</a>.</p>
+            </div>
+          </div>
+          <h3 class="label pro-also">Also on Pro</h3>
+          <div class="features features-2">
+            <div class="feature">
+              <h3>Card payments through your own Stripe account</h3>
+              <p>Take deposits, and let clients who choose to save a card pay what they owe after each stay. You pay Stripe&rsquo;s standard rate ${STRIPE_LINK}, Stripe pays you directly, and Pawservation takes no cut.</p>
+            </div>
+            <div class="feature">
+              <h3>An assistant for your back office</h3>
+              <p>Ask who still owes you or what next week looks like, and get the answer from your own records.</p>
+            </div>
+          </div>
+          <div class="cta-row mid-cta">
+            <a class="btn btn-primary" href="/signup">Sign up</a>
+            <a class="btn btn-ghost" href="#pricing">See pricing</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Control, and the fear of a bot or a lost client. Everything the page says about a client
+           changing or cancelling their own booking lives HERE and nowhere else, so the rule is read
+           once, whole. .features-3 rather than bare .features: three cards in the grid's 640-959px
+           two-column band leave the third alone with an empty cell beside it. -->
+      <section class="section band" id="clients" aria-labelledby="clients-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">You stay in charge</span>
+            <h2 id="clients-h">Your clients, your rules</h2>
+            <p>Your booking page works while you&rsquo;re busy, and it never promises anything you didn&rsquo;t.</p>
+          </div>
           <div class="features features-3">
             <div class="feature">
-              <h3>Pending until you confirm</h3>
+              <h3>Nothing is booked until you say yes</h3>
               <p>Every request waits as pending until you confirm it, and their screen says so.</p>
             </div>
             <div class="feature">
-              <h3>Changes and cancellations</h3>
-              <p>When they need to change dates or cancel they do it on the page, and your own cancellation policy sets the fee, so nobody has to raise it in a text.</p>
+              <h3>Changes on your terms</h3>
+              <p>When clients need to move dates or cancel, they do it on the page, and your own cancellation policy sets the fee.</p>
             </div>
             <div class="feature">
-              <h3>Updates stay yours</h3>
-              <p>What they send you now is about the dog. Pawservation doesn&rsquo;t do visit reports or photos, so that part of the relationship stays yours.</p>
+              <h3>Your clients stay yours</h3>
+              <p>Only clients you add can book. Nobody browses for a sitter here, and their details are yours.</p>
             </div>
           </div>
           <div class="cta-row mid-cta">
@@ -520,12 +572,12 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <section class="section band" id="dashboard" aria-labelledby="dash-h">
+      <section class="section" id="dashboard" aria-labelledby="dash-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">Your dashboard</span>
             <h2 id="dash-h">Your bookings and your money in one place</h2>
-            <p>You collect the money however you already do, and Pawservation keeps the count.</p>
+            <p>Collect money however you already do, and Pawservation keeps the count.</p>
           </div>
           <!-- Coded mock of the dashboard's bookings queue (not a screenshot): stays
                crisp at any scale and inherits the page palette. role="img" so assistive
@@ -578,79 +630,45 @@ const LANDING_HTML = `<!doctype html>
           <div class="features features-4">
             <div class="feature">
               <h3>Services and rates</h3>
-              <p>Boarding, house sitting, daycare, walks and check-ins, or a service you invent, at your own prices.</p>
+              <p>Walks, drop-ins, boarding, house sitting and daycare, at your own prices.</p>
             </div>
             <div class="feature">
               <h3>Clients and pets</h3>
-              <p>Invite clients by email or import the list you already have, and keep care notes on each animal.</p>
+              <p>Add clients by email or import your list, and keep care notes on each pet.</p>
             </div>
             <div class="feature">
-              <h3>Payments and what you&rsquo;re owed</h3>
-              <p>Log cash, Venmo, Zelle, PayPal or a check, and each client&rsquo;s balance updates itself. Upload the CSV from Venmo and a month of payments matches up at once.</p>
+              <h3>Who owes you</h3>
+              <p>Log cash, Venmo, Zelle, PayPal or a check, and each household&rsquo;s balance updates itself. Upload the CSV from Venmo and a month of payments matches up at once.</p>
             </div>
             <div class="feature">
               <h3>Google Calendar</h3>
-              <p>Connect it once and your bookings turn up on the calendar you already keep, or skip it and everything else works the same.</p>
+              <p>Bookings show up on the calendar you already keep. Skip it and everything else works the same.</p>
             </div>
-          </div>
-          <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="/signup">Sign up</a>
-            <a class="btn btn-ghost" href="/demo">Try the demo</a>
           </div>
         </div>
       </section>
 
-      <!-- What Pro adds, as cards ahead of the prices. The assistant leads: it answers the routine
-           questions so the sitter is not answering them all day, and it never replaces her, since
-           every request still waits for her tap. Card payments are a card here and a bullet on the
-           price card, not the headline. Three cards on .features-3 for the reflow #clients uses.
-           The section is plain and #pricing below it is a band, so the page keeps alternating;
-           #install flipped to plain for the same reason. What these cards claim is the whole of
-           each integration: nothing about photos, reminders or the sitter chatting back, and no
-           number handed to her by us. -->
-      <section class="section" id="pro" aria-labelledby="pro-h">
+      <!-- Trust without invented proof: a founder line built only from what /about states, and a
+           testimonial slot that renders nothing until the owner adds a real, permitted quote
+           (server/lib/testimonials.ts). No counts, no ratings, no logos. -->
+      <section class="section band" id="story" aria-labelledby="story-h">
         <div class="wrap">
-          <div class="section-head">
-            <span class="label">Pro</span>
-            <h2 id="pro-h">A friendly assistant, and you still decide</h2>
-            <p>
-              On Pro, a booking assistant answers your clients
-              on your own WhatsApp number. It handles the routine questions, whether you&rsquo;re free,
-              what a stay costs, moving a date and what they owe, and leaves every booking for you
-              to confirm with a tap. It has a daily allowance, and when that runs out clients are
-              pointed to your booking page, which always works.
-            </p>
-          </div>
-          <div class="features features-3">
-            <div class="feature">
-              <h3>Booking by WhatsApp</h3>
-              <p>Clients message your own WhatsApp number to book, get a quote, reschedule or cancel. Each new request reaches you as a WhatsApp alert with Confirm and Decline buttons, and your client hears the answer.</p>
-            </div>
-            <div class="feature">
-              <h3>An assistant for your back office</h3>
-              <p>Ask who still owes you or what next week looks like, and get the answer from your own records.</p>
-            </div>
-            <div class="feature">
-              <h3>Card payments through your own Stripe account</h3>
-              <p>Take deposits, and let clients who choose to save a card have what they still owe charged after each stay. You pay Stripe&rsquo;s published rate and no fee to Pawservation ${STRIPE_LINK}, and Stripe pays you directly.</p>
-            </div>
-          </div>
-          <div class="cta-row mid-cta">
-            <a class="btn btn-primary" href="/signup">Sign up</a>
-            <a class="btn btn-ghost" href="#pricing">See Pro pricing</a>
+          <div class="section-head story-head">
+            <span class="label">Who&rsquo;s behind it</span>
+            <h2 id="story-h">Made by a dog walker, for his own business first</h2>
+            <p>Pawservation is built by Brad, a dog walker and pet sitter who got tired of running his own business out of a text thread. <a href="/about">Read why he built it</a>.</p>
+            ${testimonialsHtml()}
+            <p>Want to see it first? <a href="/demo">Try the demo</a> and book a stay as a client.</p>
           </div>
         </div>
       </section>
 
-      <section class="section band" id="pricing" aria-labelledby="pricing-h">
+      <section class="section" id="pricing" aria-labelledby="pricing-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">Pricing</span>
             <h2 id="pricing-h">$${PRICING.soloMonthly} a month</h2>
-            <p>
-              Pro adds booking by WhatsApp with a friendly assistant, and card
-              payments through your own Stripe account. ${PRICE_LINE}
-            </p>
+            <p>${PRICE_LINE} Try it with a ${PRICING.trialDays}-day free trial, and add Pro whenever you want clients to book by WhatsApp.</p>
           </div>
           <div class="price-grid">
             <div class="price-card">
@@ -661,64 +679,101 @@ const LANDING_HTML = `<!doctype html>
                 <span class="price-num">$${PRICING.soloMonthly}</span>
                 <span class="price-per">a month</span>
               </p>
+              <p class="price-tag">Everything you need to take bookings</p>
               <ul class="price-list">
-                <li>Booking page on your website or at a link you send, unlimited bookings</li>
-                <li>Your availability rules, applied for you</li>
-                <li>How much notice you need, and how far ahead people can book</li>
-                <li>Rates, payments and one running balance per household</li>
-                <li>Cancellation policies, applied for you</li>
-                <li>Clients reschedule and cancel their own bookings</li>
-                <li>Client accounts and pet records</li>
-                <li>Google Calendar sync, both directions</li>
+                <li>Your booking page, at a link or on your website</li>
+                <li>Your services, prices, time off and cancellation policy, applied for you</li>
+                <li>Clients change and cancel their own bookings</li>
+                <li>Client and pet records, and one running balance per household</li>
+                <li>Google Calendar sync</li>
               </ul>
               <a class="btn btn-primary" href="/signup">Sign up</a>
-              <p class="note">The first ${PRICING.trialDays} days are free, and you don&rsquo;t need a card to start. Enter your email and we&rsquo;ll email you a link to get started.</p>
+              <p class="note">Your ${PRICING.trialDays}-day free trial needs no card to start.</p>
             </div>
             <div class="price-card">
               <div class="price-head">
                 <h3>Pro</h3>
+                <span class="badge">Books by WhatsApp</span>
               </div>
               <p class="price-amt">
                 <span class="price-num">$${PRICING.proMonthly}</span>
                 <span class="price-per">a month</span>
               </p>
+              <p class="price-tag">For sitters whose clients would rather message</p>
               <ul class="price-list">
                 <li>Everything in Solo</li>
-                <li>Booking by WhatsApp: clients book, get quotes, reschedule and cancel by messaging your own number, and you confirm or decline each new request from a WhatsApp alert</li>
-                <li>Clients can book through their own assistant, such as Claude</li>
+                <li>Booking by WhatsApp on your own business number, with a friendly assistant and Confirm and Decline alerts</li>
+                <li>Card payments through your own Stripe account, with no cut for Pawservation</li>
                 <li>Back-office assistant: ask who owes you and what your week looks like</li>
-                <li>Card payments through your own Stripe account: deposits, saved cards, and the balance charged after each stay, at Stripe&rsquo;s published rate with no fee from Pawservation</li>
+                <li>Clients can book through their own assistant, such as Claude</li>
               </ul>
               <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
             </div>
           </div>
           <p class="note wf-more">${TRIAL_LINE}</p>
-          <p class="note wf-more">
-            <a href="/signup">Sign up</a> and we&rsquo;ll get you started.
-          </p>
         </div>
       </section>
 
-      <section class="section" id="install" aria-labelledby="install-h">
-        <div class="wrap install-grid">
-          <div class="install-copy">
-            <span class="label">Have a website?</span>
-            <h2 id="install-h">One line puts your booking page on it</h2>
-            <p>Copy it from <strong>Settings &rarr; Your website</strong>, in your dashboard, where it already carries your business&rsquo;s name. On Squarespace, add a Code block and paste it. On Wix, choose &ldquo;Embed a site&rdquo; and use the second code shown there. It sizes itself to fit the page.</p>
-            <p>It is safe on a public page, because only your clients can book. A new visitor gets a welcome under your name, a sign-in box, and a note to get in touch with you so you can add them.</p>
-            <p>No website? Skip this and send clients your booking link instead.</p>
+      <!-- The six objections the walks raised, collapsed: native <details> needs no script, so it
+           is allowed under the locked CSP, and a reader who does not open one pays nothing for it.
+           The website answer's id is ON its <details>, because Safari does not open a closed
+           details for a fragment that targets its contents. -->
+      <section class="section band" id="faq" aria-labelledby="faq-h">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="label">Questions</span>
+            <h2 id="faq-h">Questions sitters ask</h2>
           </div>
-          <div class="codecard">
-            <div class="codecard-cap">
-              <span>your-page.html</span>
-              <span>paste &amp; save</span>
-            </div>
-            <div class="code-scroll">
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary>Do I need a website?</summary>
+              <div class="faq-a">
+                <p>No. Every account comes with a booking page at its own link. Text it to clients or put it in your Instagram bio.</p>
+              </div>
+            </details>
+            <details class="faq-item">
+              <summary>Do my clients need an app?</summary>
+              <div class="faq-a">
+                <p>No. Your booking page opens in any browser, and clients sign in with a code we email them. On Pro they can message you on WhatsApp instead.</p>
+              </div>
+            </details>
+            <details class="faq-item">
+              <summary>Do I need a new phone number for WhatsApp?</summary>
+              <div class="faq-a">
+                <p>The simplest way is a second number just for bookings, such as a second line from your phone company. If you already use the WhatsApp Business app for your pet business, you may be able to keep that number. The <a href="/getting-started/whatsapp">WhatsApp setup guide</a> walks you through both.</p>
+              </div>
+            </details>
+            <details class="faq-item" id="faq-website">
+              <summary>Have a website? Here&rsquo;s how the booking page goes on it.</summary>
+              <div class="faq-a">
+                <p>Copy one line from <strong>Settings &rarr; Your website</strong> in your dashboard, where it already carries your business&rsquo;s name. On Squarespace, add a Code block and paste it. On Wix, choose &ldquo;Embed a site&rdquo; and use the second code shown there.</p>
+                <p>It&rsquo;s safe on a public page, because only your clients can book. A new visitor gets a welcome under your name, a sign-in box, and a note to get in touch with you so you can add them.</p>
+                <div class="codecard">
+                  <div class="codecard-cap">
+                    <span>your-page.html</span>
+                    <span>paste &amp; save</span>
+                  </div>
+                  <div class="code-scroll">
 <pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;${BRAND_ORIGIN}/embed.js&quot;
         <span class="attr">data-pawservation-tenant</span>=&quot;your-business&quot;
         <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
-            </div>
+                  </div>
+                </div>
+              </div>
+            </details>
+            <details class="faq-item">
+              <summary>What does it cost to take cards?</summary>
+              <div class="faq-a">
+                <p>Card payments are part of Pro and run through your own Stripe account. You pay Stripe&rsquo;s standard rate on each payment ${STRIPE_LINK} and no fee to Pawservation, and Stripe pays you directly.</p>
+              </div>
+            </details>
+            <details class="faq-item">
+              <summary>Can I cancel?</summary>
+              <div class="faq-a">
+                <p>Yes, any time, from &ldquo;Manage plan&rdquo; in your dashboard. Your records stay yours, and you can download them as spreadsheets first.</p>
+              </div>
+            </details>
           </div>
         </div>
       </section>
@@ -726,8 +781,8 @@ const LANDING_HTML = `<!doctype html>
       <section class="cta-band" aria-labelledby="invite-h">
         <div class="wrap">
           <div class="cta-panel">
-            <h2 id="invite-h">Sign up</h2>
-            <p>Enter your email and we&rsquo;ll email you a sign-up link. Then set up your services, rates, and booking page.</p>
+            <h2 id="invite-h">Try it with your own clients</h2>
+            <p>Enter your email and we&rsquo;ll email you a sign-up link. Set up your services and prices, and send your booking link the same day.</p>
             <div class="cta-row">
               <a class="btn btn-inverse" href="/signup">Sign up</a>
               <a class="signin-inverse" href="/admin">Already have an account? Sign in</a>
@@ -1417,13 +1472,13 @@ const ABOUT_HTML = `<!doctype html>
         <!-- .nav-links-5: the same five-link row the landing header carries, with the same
              row-tuning class, because it is a third row measured at five links plus "Sign in"
              plus "Try the demo": the .how-it-works shape, not the landing page's four-item
-             .nav-right. The first three hrefs are absolute (/#how, /#dashboard, /#pricing)
+             .nav-right. The first three hrefs are absolute (/#how, /#pro, /#pricing)
              rather than the landing header's bare fragments, because a fragment link on this
-             page would scroll nowhere: there is no #how/#dashboard/#pricing section here, only
+             page would scroll nowhere: there is no #how/#pro/#pricing section here, only
              on /. -->
         <nav class="nav-links nav-links-5" aria-label="Sections">
           <a href="/#how">How it works</a>
-          <a href="/#dashboard">Dashboard</a>
+          <a href="/#pro">WhatsApp</a>
           <a href="/#pricing">Pricing</a>
           <a href="/how-it-works">Full tour</a>
           <a href="/about">About</a>
