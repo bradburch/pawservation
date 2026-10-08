@@ -94,6 +94,8 @@ describe('SEO surface', () => {
       '/about',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
       // The pair has to agree. `summary_large_image` crops to roughly 1.91:1, and the only
@@ -363,7 +365,14 @@ describe('SEO surface', () => {
     const contact = await (await app.request('/contact', {}, env)).text();
     expect(contact).toContain(org.email);
     // One entity, one page. Repeating the graph on /privacy would give a crawler four candidates.
-    for (const path of ['/how-it-works', '/privacy', '/terms', '/getting-started']) {
+    for (const path of [
+      '/how-it-works',
+      '/privacy',
+      '/terms',
+      '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
+    ]) {
       expect(await (await app.request(path, {}, env)).text(), path).not.toContain('ld+json');
     }
   });
@@ -480,6 +489,8 @@ describe('SEO surface', () => {
       '/terms',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
       const markup = body.replace(/<style>[\s\S]*?<\/style>/g, '');
@@ -576,6 +587,8 @@ describe('SEO surface', () => {
       '/privacy',
       '/terms',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
       '/signup',
       '/signup/sent',
     ]) {
@@ -655,6 +668,8 @@ describe('SEO surface', () => {
       '/about',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
       expect(body, path).toContain('href="/about"');
@@ -698,6 +713,8 @@ describe('SEO surface', () => {
       '/about',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ])
       pages.push({ label: path, body: await (await app.request(path, {}, env)).text() });
     // The sign-up pages render from server/routes/signup-page.ts rather than from pageHead, so they

@@ -11,7 +11,13 @@ import { createTestEnv } from './helpers';
  * described as a sitter's account (it shows two booking pages as a client sees them). Each is
  * banned on every public surface at once, so a page added later is covered by adding its path.
  */
-const PAGES = ['/', '/how-it-works', '/getting-started'];
+const PAGES = [
+  '/',
+  '/how-it-works',
+  '/getting-started',
+  '/getting-started/whatsapp',
+  '/getting-started/card-payments',
+];
 
 const BANNED = [
   'extra sitters',

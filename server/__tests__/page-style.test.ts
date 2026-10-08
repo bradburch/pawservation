@@ -114,6 +114,8 @@ describe('PAGE_STYLE: one token set, light and dark', () => {
       '/',
       '/how-it-works',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
       '/about',
       '/contact',
       '/privacy',

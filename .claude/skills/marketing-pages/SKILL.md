@@ -41,7 +41,7 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
 - **The other third-party script is the Cloudflare Web Analytics beacon (owner decision
   2026-10-05).** When `CF_WEB_ANALYTICS_TOKEN` is set (32 hex), `marketingHtml`
   (`server/lib/web-analytics.ts`) appends the cookieless beacon before `</body>` on the six pages
-  above, `/getting-started`, and the GETs of `/signup` and `/signup/sent`, and sets the `webAnalytics` context flag
+  above, `/getting-started` and its two Pro guides, and the GETs of `/signup` and `/signup/sent`, and sets the `webAnalytics` context flag
   the header middleware reads to add `https://static.cloudflareinsights.com` to the ONE `script-src`
   list (beside Turnstile's on `/signup`) and `https://cloudflareinsights.com` to the ONE
   `connect-src` list (beside the premium origin). Tag and allowance are one decision, so neither
@@ -49,7 +49,7 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   `/demo`, `/setup` or any POST response; `web-analytics.test.ts` pins those as unchanged. A page
   added here must be served through `marketingHtml` to be counted, and the privacy page's "What we
   measure" section lists the pages by name, so it changes in the same commit.
-- **A sign-up carries where it came from.** `GET /` and `GET /getting-started` read `utm_source`,
+- **A sign-up carries where it came from.** `GET /` and the three setup guides read `utm_source`,
   `utm_campaign` and the Referer's ORIGIN (`server/lib/attribution.ts`) and append them to their
   `href="/signup"` links (`withSignupAttribution` in `server/index.ts`, the referrer as
   `ref_origin`); `GET /signup` reads the same from its query, or from its own
@@ -58,14 +58,17 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   are dropped, never a 400; never logged, never stored. The other pages' Sign up links do not carry
   them.
 
-## `/getting-started`, the sitter's setup guide
+## `/getting-started`, the sitter's setup guides
 
-A seventh `pageHead` page, on the `/contact` skeleton (bare `.nav-right`, `.legal` prose, one `h2`
-per `.feature`), so it adds no CSS. It walks a new sitter from the sign-up email to booking by
-WhatsApp using the dashboard's own labels, and `getting-started.test.ts` pins the labels she will
-look for, so a dashboard rename fails a test rather than stranding her. Its Pro sections name a
-dashboard place, never a path on the paid origin: the cross-repo contract budget is full. It is in
-the sitemap, `run_worker_first`, the product `llms.txt` and the shared footer ("Setup guide").
+Three pages in `server/lib/setup-guides.ts`: the hub at `/getting-started` (which is also the
+booking-link guide) and the Pro guides at `/getting-started/whatsapp` and
+`/getting-started/card-payments`. They sit on the `/contact` skeleton (bare `.nav-right`, `.legal`
+prose, one `h2` per `.feature`), written as numbered one-sentence steps with the dashboard's own
+labels; `getting-started.test.ts` and `setup-guides.test.ts` pin the labels she will look for, so a
+dashboard rename fails a test rather than stranding her. The Pro guides name a dashboard place, never
+a path on the paid origin: the cross-repo contract budget is full. Each is in the sitemap,
+`run_worker_first`, the product `llms.txt`, the shared footer and the privacy page's list of measured
+pages, and carries sign-up attribution.
 
 ## `pageHead` and the canonical
 
@@ -156,8 +159,7 @@ render-free-read reason.
 ## Prices live in one constant
 
 `server/lib/plan-pricing.ts` holds `soloMonthly` (15), `proMonthly` (29), `proAnnual` (290) and
-`trialDays` (30). Solo is $15 per sitter per month with a 30-day free trial; Pro is $29 per sitter
-per month, or $290 per year. Every figure on the landing page (hero chip, pricing heading, both
+`trialDays` (30). Solo is $15 a month with a 30-day free trial; Pro is $29 a month, or $290 per year. Every figure on the landing page (hero chip, pricing heading, both
 cards), on `/how-it-works`, in the product `llms.txt` Status section and in the homepage
 `SoftwareApplication` offers is interpolated from it. Never hardcode one at a call site: four
 surfaces state these numbers, and any two of them disagreeing is a pricing lie. `/about` was a

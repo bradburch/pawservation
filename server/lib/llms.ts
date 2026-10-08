@@ -125,6 +125,8 @@ export function buildProductLlmsTxt(origin: string): string {
 - Overview: ${origin}/
 - Full tour of every feature: ${origin}/how-it-works
 - Step-by-step setup guide for a new sitter: ${origin}/getting-started
+- Setting up booking by WhatsApp (Pro): ${origin}/getting-started/whatsapp
+- Setting up card payments (Pro): ${origin}/getting-started/card-payments
 - Live demo, no sign-up (two sample sitters' booking pages, as a client sees them): ${origin}/demo
 - Privacy: ${origin}/privacy
 - Terms: ${origin}/terms

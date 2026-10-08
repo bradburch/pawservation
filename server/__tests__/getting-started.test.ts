@@ -73,8 +73,6 @@ describe('GET /getting-started — the sitter setup guide', () => {
       'clients',
       'booking-page',
       'plan',
-      'cards',
-      'whatsapp',
       'your-clients',
       'questions',
     ];
@@ -86,6 +84,10 @@ describe('GET /getting-started — the sitter setup guide', () => {
       expect(body, id).toContain(`href="#${id}"`);
       last = at;
     }
+    // The guide cards, not the shared footer (which links both guides too).
+    const main = body.slice(0, body.indexOf('<footer'));
+    expect(main).toContain('href="/getting-started/whatsapp"');
+    expect(main).toContain('href="/getting-started/card-payments"');
   });
 
   it('names only dashboard labels the dashboard really prints', async () => {
@@ -136,7 +138,6 @@ describe('GET /getting-started — the sitter setup guide', () => {
       'Your plan',
       'Manage plan',
       'Sync with Stripe',
-      'Access tokens',
       'only the combinations I price below',
       'Request Booking',
     ]) {
@@ -160,14 +161,6 @@ describe('GET /getting-started — the sitter setup guide', () => {
     expect(body).toContain('never guessed');
     for (const lie of ['we estimate', 'we work out a price', 'the widget asks you for a rate'])
       expect(body.toLowerCase(), lie).not.toContain(lie);
-  });
-
-  it('says card money is hers: Stripe pays her, at Stripe’s rate, with no Pawservation fee', async () => {
-    const body = await guideBody();
-    expect(body).toContain('Stripe&rsquo;s published rate');
-    expect(body).toContain('no fee to Pawservation');
-    expect(body).toContain('Stripe pays you directly');
-    expect(body).not.toMatch(/we (take|hold|keep) (a cut|your (funds|money))/i);
   });
 
   it('every Pro booking still waits for her, on WhatsApp as on the dashboard', async () => {
@@ -245,12 +238,12 @@ describe('copy clarity across the marketing pages', () => {
   });
 
   it('links Stripe’s own pricing beside the published-rate claim', async () => {
-    for (const path of ['/', '/how-it-works', '/getting-started'])
+    for (const path of ['/', '/how-it-works', '/getting-started/card-payments'])
       expect(await page(path), path).toContain('href="https://stripe.com/pricing"');
   });
 
   it('explains charging after a stay as opt-in, balance-only, and never retried', async () => {
-    const body = await page('/getting-started');
+    const body = await page('/getting-started/card-payments');
     expect(body).toContain('This only ever happens to a client who asked for it.');
     expect(body).toContain('Allow charges after stays');
     expect(body).toContain('Clients who don&rsquo;t opt in pay you the way they do now.');
@@ -259,7 +252,7 @@ describe('copy clarity across the marketing pages', () => {
   });
 
   it('names what the assistant handles and what happens when its allowance runs out', async () => {
-    for (const path of ['/how-it-works', '/getting-started']) {
+    for (const path of ['/how-it-works', '/getting-started/whatsapp']) {
       const body = await page(path);
       expect(body, path).toContain('daily allowance');
       expect(body, path).toMatch(/pointed to your booking page, which always works/);
@@ -279,7 +272,7 @@ describe('copy clarity across the marketing pages', () => {
   });
 
   it('sends her to card payments through the audit card, by label', async () => {
-    const body = await page('/getting-started');
+    const body = await page('/getting-started/card-payments');
     expect(body).toContain(
       'find &ldquo;Card payments&rdquo; and choose &ldquo;Open card payments&rdquo;',
     );

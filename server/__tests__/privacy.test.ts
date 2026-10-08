@@ -60,7 +60,7 @@ describe('GET /privacy', () => {
     expect(main.replace(/#invite-h/g, '')).not.toMatch(/invite/i);
     expect(body).toContain('<h2>What we measure</h2>');
     expect(body).toContain('Cloudflare Web Analytics');
-    expect(body).toContain('the homepage, the tour, Getting started, About, Contact');
+    expect(body).toContain('the homepage, the tour, the setup guides, About, Contact');
     expect(body).toMatch(/sets no cookies/i);
     expect(body).toMatch(/does not fingerprint you/i);
     expect(body).toMatch(

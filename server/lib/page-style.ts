@@ -978,6 +978,23 @@ export const PAGE_STYLE = /* css */ `
       /* Two cards read as a pair: the three-column default would leave an empty third column. */
       @media (min-width: 960px) { .features-2 { grid-template-columns: 1fr 1fr; } }
 
+      /* The setup hub's guide cards: a whole-card link, so no underline and a border that answers
+         the pointer. The "Which number?" pair on the WhatsApp guide nests two .feature cards in a
+         .features grid inside a .legal block, whose stacked-block margin must not push the second
+         card down. */
+      .guide-card {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 20px;
+      }
+      .guide-card:hover,
+      .guide-card:focus-visible { border-color: var(--link); }
+      .legal .features .feature + .feature { margin-top: 0; }
+
       /* ── Plan badge and tagline ─────────────────────────────────── */
       .badge {
         display: inline-block;
