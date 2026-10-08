@@ -77,7 +77,7 @@ describe('landing wording', () => {
 
   it('gives the three helpers three names', async () => {
     const body = await landing();
-    expect(body).toContain('a friendly assistant answers');
+    expect(body).toContain('a friendly AI assistant answers');
     expect(body).toContain('A helper for your back office');
     expect(body).toMatch(/back-office helper.*who owes you/i);
     expect(body).toMatch(/clients who use Claude can connect it and book with you/i);

@@ -135,7 +135,7 @@ describe.each(Object.entries(GUIDES))('%s', (path, guide) => {
     const body = await (await page(path)).text();
     const copy = copyOf(body);
     for (const banned of [
-      /\bAI\b/,
+      /\bAI\b(?! assistant)/,
       /invoice/i,
       /statement/i,
       /\bSMS\b/,
@@ -156,6 +156,25 @@ describe.each(Object.entries(GUIDES))('%s', (path, guide) => {
 });
 
 describe('what each guide must say', () => {
+  it('says "connection key" in its own words and keeps the dashboard labels quoted', async () => {
+    for (const path of ['/getting-started/whatsapp', '/getting-started/card-payments']) {
+      const body = await (await page(path)).text();
+      expect(body, path).toContain('connection key');
+      expect(body, path).toContain('it&rsquo;s called an access token there');
+      expect(body, path).not.toContain('The token is shown only once');
+      expect(body, path).not.toContain('Why a token?');
+      expect(body, path).not.toContain('Add an access token');
+    }
+  });
+
+  it('hub: tips that Squarespace runs the code only on a plan that allows it', async () => {
+    const body = await (await page('/getting-started')).text();
+    const step = body.slice(body.indexOf('id="booking-page"'), body.indexOf('id="plan"'));
+    expect(step).toContain(
+      '<strong>Tip:</strong> Squarespace runs code only on its Core plan or above',
+    );
+  });
+
   it('WhatsApp: the costs, the allowance, both number paths and the alerts number', async () => {
     const body = await (await page('/getting-started/whatsapp')).text();
     expect(body).toContain('href="https://business.whatsapp.com/products/platform-pricing"');
@@ -165,7 +184,15 @@ describe('what each guide must say', () => {
     expect(body).toContain('A new number just for bookings (recommended).');
     expect(body).toContain('The number your clients already message.');
     expect(body).toContain('becomes the number your alerts go to');
-    expect(body).toContain('Make a separate token for card payments');
+    expect(body).toContain('Make a separate key for card payments');
+    // Rosa: say why the alerts number is a second one, and offer to do the setup with her.
+    expect(body).toContain(
+      'Alerts come to your own WhatsApp, which has to be a different number from your business one.',
+    );
+    expect(body).toContain(
+      'We&rsquo;ll set it up with you: email <a href="mailto:hello@pawservation.com',
+    );
+    expect(body).toContain('a friendly AI assistant answers');
     // The admin number has to be a US number, and not the business number.
     expect(body).toContain('WhatsApp on your own phone, on a different US number');
   });
@@ -195,6 +222,6 @@ describe('what each guide must say', () => {
     expect(body).toContain('This only ever happens to a client who asked for it.');
     expect(body).toContain('Clients who don&rsquo;t opt in pay you the way they do now.');
     expect(body).toContain('If a card is declined, it is not tried again');
-    expect(body).toContain('Use a different token from the one for WhatsApp');
+    expect(body).toContain('Use a different key from the one for WhatsApp');
   });
 });

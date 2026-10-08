@@ -96,7 +96,14 @@ describe('GET / — landing page', () => {
     // targets its contents, so an id inside it would scroll to nothing visible.
     expect(faq).toMatch(/<details[^>]*id="faq-website"/);
     const website = faq.slice(faq.indexOf('id="faq-website"'));
-    expect(website.slice(0, website.indexOf('</details>'))).toContain('&lt;script');
+    const answer = website.slice(0, website.indexOf('</details>'));
+    // Persona round, 2026-10-08: the code block read as web-developer noise to a sitter with no
+    // website. The answer links the guide's step instead; the tour and the dashboard keep the code.
+    expect(answer).not.toContain('&lt;script');
+    expect(answer).not.toContain('embed.js');
+    expect(answer).toContain(
+      '<a href="/getting-started#booking-page">Add it to your website, step by step</a>',
+    );
     expect(body).toContain('href="#faq-website"');
   });
 
@@ -156,15 +163,18 @@ describe('GET / — landing page', () => {
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
   });
 
-  it('shows the embed snippet as escaped text only', async () => {
+  it('keeps the embed snippet off the landing page; the tour and the guide carry it', async () => {
     const body = await landingBody();
-    expect(body).toContain('&lt;script');
-    expect(body).toContain('data-pawservation-tenant');
+    // Persona round, 2026-10-08: a sitter with no website read the code as noise.
+    expect(body).not.toContain('&lt;script');
+    expect(body).not.toContain('data-pawservation-tenant');
   });
 
   it('sends every Sign up straight to /signup: no form here, no anchor hop, no mailto', async () => {
     const body = await landingBody();
-    expect(body).not.toMatch(/href="mailto:/);
+    // No button is a mailto. The one mailto on the page is Pro's setup offer (owner, 2026-10-08).
+    expect(body).not.toMatch(/class="btn[^"]*" href="mailto:/);
+    expect(body.match(/href="mailto:/g)).toHaveLength(1);
     // One page, one form: a form here made the sitter submit twice (here, then the challenge).
     expect(body).not.toMatch(/<form\b/);
     expect(body).not.toContain('href="#invite-h"');
@@ -569,5 +579,48 @@ describe('GET / — landing page', () => {
     for (const legacy of ['open source', 'open-source', 'free tier', 'free plan', 'free forever'])
       expect(body, legacy).not.toContain(legacy);
     expect(body).not.toContain('bradpaws');
+    // The no-cut comparison names no marketplace: a competitor's fee is theirs to change.
+    expect(body).not.toContain('rover');
+  });
+
+  it('names the AI assistant once, says what it answers with, and that she can switch it off', async () => {
+    const body = await landingBody();
+    const hero = body
+      .slice(body.indexOf('class="hero"'), body.indexOf('id="fit"'))
+      .replace(/\s+/g, ' ');
+    expect(hero).toContain(
+      'a friendly AI assistant answers with your rates and open dates. You confirm every booking with one tap, and you can switch the assistant off any time.',
+    );
+    // First mention only: later ones are "the assistant", and nothing calls it automation.
+    expect(body.match(/friendly AI assistant/g)?.length).toBeLessThanOrEqual(2);
+    expect(body).not.toContain('A friendly assistant answers');
+    expect(body.toLowerCase()).not.toContain('ai automation');
+  });
+
+  it('says what each plan is for, near the hero price and on the price cards', async () => {
+    const body = await landingBody();
+    const hero = body.slice(body.indexOf('class="hero"'), body.indexOf('id="fit"'));
+    expect(hero).toContain(
+      'Solo, $15 a month: your booking link and calendar. Pro, $29 a month: adds booking by WhatsApp, cards and deposits.',
+    );
+    const pricing = body.slice(body.indexOf('id="pricing"'), body.indexOf('id="faq"'));
+    expect(pricing).toContain('<p class="price-tag">Your booking link and calendar</p>');
+    expect(pricing).toContain(
+      '<p class="price-tag">Adds booking by WhatsApp, cards and deposits</p>',
+    );
+    expect(pricing).toContain(
+      '<li>No AI talks to your clients unless you add Pro and switch it on</li>',
+    );
+    expect(pricing).toContain(
+      'Unlike a marketplace app, neither plan takes a cut of your bookings.',
+    );
+  });
+
+  it('offers to set up WhatsApp with her, on the Pro section', async () => {
+    const body = await landingBody();
+    const pro = body.slice(body.indexOf('id="pro"'), body.indexOf('id="clients"'));
+    expect(pro).toContain(
+      'We&rsquo;ll set it up with you: email <a href="mailto:hello@pawservation.com">hello@pawservation.com</a>.',
+    );
   });
 });

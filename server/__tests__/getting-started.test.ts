@@ -219,10 +219,12 @@ describe('copy clarity across the marketing pages', () => {
     for (const path of ['/', '/how-it-works']) {
       const body = await page(path);
       expect(body, path).not.toContain('your-site');
-      expect(body, path).toContain(`${BRAND_ORIGIN}/embed.js`);
       expect(body, path).toContain('Settings &rarr; Your website');
     }
+    // The code itself is on the tour; the landing links the guide's step (persona round, 2026-10-08).
+    expect(await page('/how-it-works')).toContain(`${BRAND_ORIGIN}/embed.js`);
     expect(await page('/')).toContain('Have a website?');
+    expect(await page('/')).toContain('href="/getting-started#booking-page"');
   });
 
   it('states the price and the trial in one wording on every page', async () => {

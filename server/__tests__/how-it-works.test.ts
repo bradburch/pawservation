@@ -110,7 +110,10 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).toContain('id="pro"');
     // The assistant answers routine questions and never books: a request it takes still waits for
     // her tap, the same rule "Nothing books itself." states for every other path.
-    expect(body).toContain('a friendly assistant');
+    expect(body).toContain(
+      '<h2 id="pro-h">On Pro, a friendly AI assistant takes the routine questions</h2>',
+    );
+    expect(body).toContain('You can switch it off any time.');
     expect(body).toContain('WhatsApp alert with Confirm and Decline buttons');
     // One noun per thing across public pages: the landing calls it the back-office helper, and
     // "assistant" is the client-facing one.
@@ -294,8 +297,15 @@ describe('GET /how-it-works — the tour page', () => {
 
   it('never claims an unbuilt capability as available', async () => {
     const body = await howItWorksBody();
-    // Forbidden nouns: nothing on this page may promise invoicing, AI, or SMS features.
-    for (const banned of [/\bAI\b/, /invoice/i, /statement/i, /\bSMS\b/, /text message/i]) {
+    // Forbidden nouns: nothing on this page may promise invoicing, AI, or SMS features. The one
+    // AI that exists is named as what it is, "AI assistant" (owner, 2026-10-08); any other AI is banned.
+    for (const banned of [
+      /\bAI\b(?! assistant)/,
+      /invoice/i,
+      /statement/i,
+      /\bSMS\b/,
+      /text message/i,
+    ]) {
       expect(body, String(banned)).not.toMatch(banned);
     }
     // …nor a refusal reason the API does not give, nor a limit marketing stopped quoting.
@@ -577,7 +587,7 @@ describe('the landing page claims only what ships', () => {
     return res.text();
   }
 
-  it('is script-free under the locked CSP, with the embed snippet escaped', async () => {
+  it('is script-free under the locked CSP', async () => {
     const { env } = createTestEnv();
     const res = await app.request('/', {}, env);
     const body = await res.text();
@@ -587,7 +597,6 @@ describe('the landing page claims only what ships', () => {
     // EXECUTABLE script, so pin that: every script tag on the page must be the data block, and the
     // assertion fails the moment a real one appears.
     expect(body.match(/<script[^>]*>/g)).toEqual(['<script type="application/ld+json">']);
-    expect(body).toContain('&lt;script');
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
     expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
   });

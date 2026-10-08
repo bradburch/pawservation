@@ -373,13 +373,15 @@ const LANDING_HTML = `<!doctype html>
             <h1>Spend less time on booking texts and more time with the pets.</h1>
             <p class="sub">
               Clients check your open days, see your prices and ask to book from one link you send
-              them. On Pro they can simply message you on WhatsApp, and a friendly assistant answers.
-              You confirm every booking with one tap.
+              them. On Pro they can simply message you on WhatsApp, and a friendly AI assistant answers
+              with your rates and open dates. You confirm every booking with one tap, and you can
+              switch the assistant off any time.
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="/signup">Start your ${PRICING.trialDays}-day free trial</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
             </div>
+            <p class="note">Solo, $${PRICING.soloMonthly} a month: your booking link and calendar. Pro, $${PRICING.proMonthly} a month: adds booking by WhatsApp, cards and deposits.</p>
             <p class="note">
               <a href="/signup">Sign up</a> with just your email. No card needed to start. The demo
               lets you book as a client without signing up for anything. Have an account?
@@ -512,7 +514,7 @@ const LANDING_HTML = `<!doctype html>
           <div class="section-head">
             <span class="label">On Pro</span>
             <h2 id="pro-h">Let clients book you on WhatsApp</h2>
-            <p>Clients message your business number the way they&rsquo;d text you. A friendly assistant answers with your open dates and your prices, takes the request, and sends it to your own WhatsApp with Confirm and Decline buttons. Your client gets an answer right away, and the final yes is yours.</p>
+            <p>Clients message your business number the way they&rsquo;d text you. The assistant answers with your open dates and your prices, takes the request, and sends it to your own WhatsApp with Confirm and Decline buttons. Your client gets an answer right away, and the final yes is yours.</p>
           </div>
           <div class="pro-grid">
             <div class="phone" role="img" aria-label="Example WhatsApp conversation. A client asks whether Biscuit can board from Saturday the 14th to Tuesday the 17th. The assistant says the dates are open and the price is $150 for three nights, and offers to send the request. The sitter gets an alert with Confirm and Decline buttons.">
@@ -542,7 +544,7 @@ const LANDING_HTML = `<!doctype html>
                 <h3>You decide every booking</h3>
                 <p>Confirm or Decline straight from the alert, or later in your dashboard.</p>
               </div>
-              <p class="note">Setting it up takes a Facebook login and a phone number for your business. <a href="/getting-started/whatsapp">See what you need</a>.</p>
+              <p class="note">Setting it up takes a Facebook login and a phone number for your business. <a href="/getting-started/whatsapp">See what you need</a>. We&rsquo;ll set it up with you: email <a href="mailto:${htmlEscape(SUPPORT_EMAIL)}">${htmlEscape(SUPPORT_EMAIL)}</a>.</p>
             </div>
           </div>
           <h3 class="label pro-also">Also on Pro</h3>
@@ -679,7 +681,7 @@ const LANDING_HTML = `<!doctype html>
           <div class="section-head">
             <span class="label">Pricing</span>
             <h2 id="pricing-h">$${PRICING.soloMonthly} a month</h2>
-            <p>${PRICE_LINE} Try it with a ${PRICING.trialDays}-day free trial, and add Pro whenever you want clients to book by WhatsApp.</p>
+            <p>${PRICE_LINE} Unlike a marketplace app, neither plan takes a cut of your bookings.</p>
           </div>
           <div class="price-grid">
             <div class="price-card">
@@ -690,13 +692,14 @@ const LANDING_HTML = `<!doctype html>
                 <span class="price-num">$${PRICING.soloMonthly}</span>
                 <span class="price-per">a month</span>
               </p>
-              <p class="price-tag">Everything you need to take bookings</p>
+              <p class="price-tag">Your booking link and calendar</p>
               <ul class="price-list">
                 <li>Your booking page, at a link or on your website</li>
                 <li>Your services, prices, time off and cancellation policy, applied for you</li>
                 <li>Clients change and cancel their own bookings</li>
                 <li>Client and pet records, and one running balance per household</li>
                 <li>Google Calendar sync</li>
+                <li>No AI talks to your clients unless you add Pro and switch it on</li>
               </ul>
               <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">Your ${PRICING.trialDays}-day free trial needs no card to start.</p>
@@ -710,10 +713,10 @@ const LANDING_HTML = `<!doctype html>
                 <span class="price-num">$${PRICING.proMonthly}</span>
                 <span class="price-per">a month</span>
               </p>
-              <p class="price-tag">For sitters whose clients would rather message</p>
+              <p class="price-tag">Adds booking by WhatsApp, cards and deposits</p>
               <ul class="price-list">
                 <li>Everything in Solo</li>
-                <li>Booking by WhatsApp on your own business number, with a friendly assistant and Confirm and Decline alerts</li>
+                <li>Booking by WhatsApp on your own business number, with a friendly AI assistant and Confirm and Decline alerts</li>
                 <li>Card payments through your own Stripe account, with no cut for Pawservation</li>
                 <li>A back-office helper that tells you who owes you and what your week looks like</li>
                 <li>Clients who use Claude can connect it and book with you</li>
@@ -756,17 +759,7 @@ const LANDING_HTML = `<!doctype html>
               <div class="faq-a">
                 <p>Copy one line from <strong>Settings &rarr; Your website</strong> in your dashboard, where it already carries your business&rsquo;s name. On Squarespace, add a Code block and paste it. On Wix, choose &ldquo;Embed a site&rdquo; and use the second code shown there.</p>
                 <p>It&rsquo;s safe on a public page, because only your clients can book. A new visitor gets a welcome under your name, a sign-in box, and a note to get in touch with you so you can add them.</p>
-                <div class="codecard">
-                  <div class="codecard-cap">
-                    <span>your-page.html</span>
-                    <span>paste &amp; save</span>
-                  </div>
-                  <div class="code-scroll">
-<pre><span class="tag">&lt;script</span> <span class="attr">src</span>=&quot;${BRAND_ORIGIN}/embed.js&quot;
-        <span class="attr">data-pawservation-tenant</span>=&quot;your-business&quot;
-        <span class="attr">data-height</span>=&quot;520&quot;<span class="tag">&gt;&lt;/script&gt;</span></pre>
-                  </div>
-                </div>
+                <p><a href="/getting-started#booking-page">Add it to your website, step by step</a>.</p>
               </div>
             </details>
             <details class="faq-item">
@@ -920,7 +913,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             </div>
             <div class="feature">
               <h3>By WhatsApp, on Pro</h3>
-              <p>Clients message your own WhatsApp number, and the assistant answers and takes the request for you to confirm. <a href="#pro">More on Pro</a>.</p>
+              <p>Clients message your own WhatsApp number, and an AI assistant answers and takes the request for you to confirm. <a href="#pro">More on Pro</a>.</p>
             </div>
           </div>
           <p class="note wf-more">
@@ -1112,11 +1105,11 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
         <div class="wrap">
           <div class="section-head">
             <span class="label">Pro</span>
-            <h2 id="pro-h">On Pro, a friendly assistant takes the routine questions</h2>
+            <h2 id="pro-h">On Pro, a friendly AI assistant takes the routine questions</h2>
             <p>
               The assistant answers your clients with your rates, your rules and your open dates:
               whether you&rsquo;re free, what a stay costs, moving a date, what they owe. Every
-              booking it takes still waits for you. It has a daily allowance, and when that runs
+              booking it takes still waits for you. You can switch it off any time. It has a daily allowance, and when that runs
               out clients are pointed to your booking page, which always works.
             </p>
           </div>

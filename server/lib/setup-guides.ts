@@ -197,6 +197,7 @@ export const GETTING_STARTED_HTML = guidePage(
               <li>No website? Press &ldquo;Copy the link&rdquo; and text or email it to clients.</li>
               <li>Have a website? Press &ldquo;Copy the code&rdquo; and paste it into a code block. On Wix, use the second code with &ldquo;Embed a site&rdquo;.</li>
             </ol>
+            <p><strong>Tip:</strong> Squarespace runs code only on its Core plan or above (Business on older plans). On another plan, share your link instead.</p>
             <p>The page is safe in public, because only clients you&rsquo;ve added can book. A new visitor sees a welcome under your name, a sign-in box, and a note asking them to get in touch with you so you can add them. Anyone with the address can read your services and rates.</p>
           </div>
 
@@ -241,7 +242,7 @@ export const WHATSAPP_GUIDE_HTML = guidePage(
       'How to let clients book you on WhatsApp with Pawservation Pro: which phone number to use, what Meta asks for, what it costs, and each step.',
     chip: 'Setup guide &middot; Pro',
     h1: 'Let clients book you on WhatsApp',
-    sub: 'Clients message your business number, a friendly assistant answers with your dates and prices, and every new request comes to your own WhatsApp to Confirm or Decline.',
+    sub: 'Clients message your business number, a friendly AI assistant answers with your dates and prices, and every new request comes to your own WhatsApp to Confirm or Decline.',
   },
   `
       <section class="section">
@@ -258,6 +259,8 @@ export const WHATSAPP_GUIDE_HTML = guidePage(
               <li>a debit or credit card for Meta, which bills you for some messages;</li>
               <li>a computer, with your dashboard open.</li>
             </ul>
+            <p>Alerts come to your own WhatsApp, which has to be a different number from your business one.</p>
+            <p>We&rsquo;ll set it up with you: email ${SUPPORT_LINK}.</p>
           </div>
 
           <div class="feature" id="which-number">
@@ -293,14 +296,14 @@ export const WHATSAPP_GUIDE_HTML = guidePage(
 
           <div class="feature" id="while-you-wait">
             <h2>Part 2: While Meta reviews</h2>
-            <p>About 10 minutes.</p>
+            <p>About 10 minutes. You&rsquo;ll make a connection key in your dashboard (it&rsquo;s called an access token there) and paste it in.</p>
             <ol>
               <li>If the WhatsApp section asks for a payment method, add a card in Meta&rsquo;s WhatsApp Manager, under its billing settings.</li>
               <li>Open <strong>Settings &rarr; Business &rarr; Access tokens</strong> in a second tab, type &ldquo;WhatsApp&rdquo; as the name, and press &ldquo;Create token&rdquo;.</li>
-              <li>Press &ldquo;Copy&rdquo;. The token is shown only once.</li>
+              <li>Press &ldquo;Copy&rdquo;. The key is shown only once.</li>
               <li>Back in the WhatsApp section, paste it into &ldquo;Access token for booking by message&rdquo; and press &ldquo;Save token&rdquo;.</li>
             </ol>
-            <p>Why a token? It lets booking by WhatsApp check your calendar and record requests when you&rsquo;re not signed in. Make a separate token for card payments, so turning one off never stops the other.</p>
+            <p>Why a key? It lets booking by WhatsApp check your calendar and record requests when you&rsquo;re not signed in. Make a separate key for card payments, so turning one off never stops the other.</p>
           </div>
 
           <div class="feature" id="switch-on">
@@ -335,7 +338,7 @@ export const WHATSAPP_GUIDE_HTML = guidePage(
             <p><strong>The code never arrives.</strong> Choose the phone-call option. Landlines and some numbers only get the call.</p>
             <p><strong>Meta won&rsquo;t accept the number.</strong> It&rsquo;s probably an internet-only number. Use a mobile line.</p>
             <p><strong>Alerts aren&rsquo;t arriving.</strong> Check the WhatsApp section: alerts start after Meta approves your messages and you&rsquo;ve proven your admin number.</p>
-            <p><strong>It says the access token stopped working.</strong> Create a new token named &ldquo;WhatsApp&rdquo; and paste it in again.</p>
+            <p><strong>It says the access token stopped working.</strong> Create a new key named &ldquo;WhatsApp&rdquo; and paste it in again.</p>
             <p><strong>Still stuck?</strong> Email ${SUPPORT_LINK} with your business name. A person reads it.</p>
             <p><strong>Turning it off.</strong> &ldquo;Switch booking by message off&rdquo; stops it straight away, and clients who message are pointed to your booking page. &ldquo;Disconnect WhatsApp&rdquo; removes Pawservation&rsquo;s access to your number. Your booking page keeps working either way. The assistant has a daily allowance, and when it runs out clients are pointed to your booking page, which always works.</p>
             <p>Next: <a href="/getting-started/card-payments">take card payments</a>.</p>
@@ -385,13 +388,14 @@ export const CARD_GUIDE_HTML = guidePage(
           </div>
 
           <div class="feature" id="token">
-            <h2>Part 2: Add an access token</h2>
+            <h2>Part 2: Add a connection key</h2>
+            <p>You&rsquo;ll make the key in your dashboard (it&rsquo;s called an access token there) and paste it into card payments.</p>
             <ol>
               <li>In your dashboard tab, open <strong>Settings &rarr; Business &rarr; Access tokens</strong>, type &ldquo;Card payments&rdquo; as the name, and press &ldquo;Create token&rdquo;.</li>
-              <li>Press &ldquo;Copy&rdquo;. The token is shown only once.</li>
+              <li>Press &ldquo;Copy&rdquo;. The key is shown only once.</li>
               <li>Back in the card payments tab, paste it and press &ldquo;Save token&rdquo;.</li>
             </ol>
-            <p>This lets card payments record a deposit when you&rsquo;re not signed in. Use a different token from the one for WhatsApp, so turning one off never stops the other.</p>
+            <p>This lets card payments record a deposit when you&rsquo;re not signed in. Use a different key from the one for WhatsApp, so turning one off never stops the other.</p>
           </div>
 
           <div class="feature" id="deposits">
@@ -418,7 +422,7 @@ export const CARD_GUIDE_HTML = guidePage(
             <p><strong>Stripe asks for your full Social Security number.</strong> That&rsquo;s normal when the last four digits can&rsquo;t be matched. It&rsquo;s Stripe asking, on Stripe&rsquo;s own page.</p>
             <p><strong>Stripe is still checking after a day.</strong> Press &ldquo;Continue setup&rdquo; to see what Stripe needs.</p>
             <p><strong>Payouts are paused.</strong> Check your bank details in Stripe.</p>
-            <p><strong>It says the access token stopped working.</strong> Create a new token named &ldquo;Card payments&rdquo; and save it again.</p>
+            <p><strong>It says the access token stopped working.</strong> Create a new key named &ldquo;Card payments&rdquo; and save it again.</p>
             <p><strong>Still stuck?</strong> Email ${SUPPORT_LINK} with your business name. A person reads it.</p>
             <p><strong>Two kinds of Stripe page.</strong> Paying for your own Pawservation plan also happens on a Stripe page, but it&rsquo;s separate: your clients&rsquo; payments go to your own Stripe account, and your plan is paid to Pawservation.</p>
             <p><strong>Turning it off.</strong> &ldquo;Disconnect Stripe&rdquo; removes saved cards, closes open payment links and stops any scheduled charges. Payments already made stay in your Stripe account.</p>
