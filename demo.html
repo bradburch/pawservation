@@ -123,6 +123,15 @@
         border-bottom: 1px solid #ddd6cb;
         padding-bottom: 8px;
       }
+      .plan {
+        margin: 0 0 12px;
+        font-family: var(--sans);
+        font-size: 0.85rem;
+        color: var(--body-c);
+      }
+      .plan a {
+        color: var(--green);
+      }
       #toast {
         position: fixed;
         bottom: 16px;
@@ -162,10 +171,17 @@
     <main class="columns">
       <section class="column">
         <h2>Sunny Paws — "Book a stay"</h2>
+        <p class="plan">
+          Sunny Paws is on <a href="/#pro">Pro</a>, $%PRICING_PRO_MONTHLY% a month: her booking
+          page, plus booking by WhatsApp with a friendly AI assistant, cards and deposits.
+        </p>
         <script src="/embed.js" data-pawservation-tenant="sunny-paws" data-height="520"></script>
       </section>
       <section class="column">
         <h2>Happy Tails — "Reserve now"</h2>
+        <p class="plan">
+          Happy Tails is on Solo, $%PRICING_SOLO_MONTHLY% a month: her booking page and calendar.
+        </p>
         <script src="/embed.js" data-pawservation-tenant="happy-tails" data-height="520"></script>
       </section>
     </main>

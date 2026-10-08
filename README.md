@@ -175,6 +175,8 @@ Seeded demo logins:
   `dana@happytails.test` / `demo1234` (slug `happy-tails`).
 - **Widget customer:** sign in as `jess@example.com` — in dev mode the 6-digit code
   appears on screen. Pets Bella/Mochi are pre-registered.
+- **Plans:** `sql/seed-demo.sql` puts Sunny Paws on Pro (a paid comp, `PremiumUntil`) and
+  Happy Tails on Solo (a basic comp, `CompedUntil`), and `/demo` says so under each widget.
 
 ## Everyday commands
 

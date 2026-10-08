@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
 import { PAGE_STYLE } from '../lib/page-style';
+import { fillPlanPrices, PRICING } from '../lib/plan-pricing';
 import { createTestEnv } from './helpers';
 import { liveSource } from './helpers/live-source';
 
@@ -40,6 +41,30 @@ describe('in-app copy tells the truth about Pro', () => {
     const note = demo.match(/<p class="note">([\s\S]*?)<\/p>/)![1];
     expect(note).not.toMatch(/tenant/i);
     expect(note).not.toContain('/embed.js');
+  });
+
+  it('the demo says which sitter is on Solo and which on Pro, priced from PRICING', () => {
+    const source = readFileSync(join(ROOT, 'demo.html'), 'utf8');
+    // A price typed into the page is a second copy of PRICING that can disagree with the landing.
+    expect(source).not.toMatch(/\$\d/);
+    const built = fillPlanPrices(source);
+    expect(built).not.toContain('%PRICING_');
+    const plans = [...built.matchAll(/<p class="plan">([\s\S]*?)<\/p>/g)].map((m) =>
+      m[1]
+        .replace(/<[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    );
+    expect(plans).toEqual([
+      expect.stringContaining(`Sunny Paws is on Pro, $${PRICING.proMonthly} a month`),
+      expect.stringContaining(`Happy Tails is on Solo, $${PRICING.soloMonthly} a month`),
+    ]);
+    expect(plans[0]).toContain('friendly AI assistant');
+    for (const line of plans) expect(line).not.toMatch(/\bfree\b/i);
+  });
+
+  it('a mistyped price placeholder fails the build rather than shipping', () => {
+    expect(() => fillPlanPrices('<p>$%PRICING_PRO_MONTHY%</p>')).toThrow(/PRICING_PRO_MONTHY/);
   });
 });
 
