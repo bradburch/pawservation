@@ -80,9 +80,9 @@ describe('landing wording', () => {
     expect(body).toContain('a friendly AI assistant answers');
     expect(body).toContain('A helper for your back office');
     expect(body).toMatch(/back-office helper.*who owes you/i);
-    expect(body).toMatch(/clients who use Claude can connect it and book with you/i);
-    expect(body).not.toContain('such as Claude');
-    expect(body).not.toContain('ChatGPT');
+    expect(body).toMatch(/clients who use an AI assistant can connect it and book with you/i);
+    for (const vendor of ['Claude', 'ChatGPT', 'Gemini', 'Copilot'])
+      expect(body).not.toContain(vendor);
     expect(body).not.toContain('back-office assistant');
   });
 

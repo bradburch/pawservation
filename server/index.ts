@@ -719,7 +719,7 @@ const LANDING_HTML = `<!doctype html>
                 <li>Booking by WhatsApp on your own business number, with a friendly AI assistant and Confirm and Decline alerts</li>
                 <li>Card payments through your own Stripe account, with no cut for Pawservation</li>
                 <li>A back-office helper that tells you who owes you and what your week looks like</li>
-                <li>Clients who use Claude can connect it and book with you</li>
+                <li>Clients who use an AI assistant can connect it and book with you</li>
               </ul>
               <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
@@ -1269,7 +1269,7 @@ const PRIVACY_HTML = `<!doctype html>
           <p class="chip">Legal</p>
           <h1>Privacy Policy</h1>
           <p class="sub">What we collect, who we share it with, and how long we keep it, written to match what the product does.</p>
-          <p class="note">Last updated: October 6, 2026</p>
+          <p class="note">Last updated: October 8, 2026</p>
         </div>
       </section>
 
@@ -1281,9 +1281,9 @@ const PRIVACY_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>Conversations with Pro&rsquo;s AI features</h2>
-            <p>When a client or a sitter uses one of Pro&rsquo;s AI features, we keep a transcript of the messages they send and the assistant&rsquo;s replies, stored on Pawservation&rsquo;s own systems. That covers the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office helper. When a client connects their own AI assistant (Claude, for example), we keep only what that assistant sends to Pawservation (its requests and our answers), not the client&rsquo;s own conversation with their assistant.</p>
+            <p>When a client or a sitter uses one of Pro&rsquo;s AI features, we keep a transcript of the messages they send and the assistant&rsquo;s replies, stored on Pawservation&rsquo;s own systems. That covers the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office helper. When a client connects their own AI assistant, we keep only what that assistant sends to Pawservation (its requests and our answers), not the client&rsquo;s own conversation with their assistant.</p>
             <p>Before a transcript is stored, we remove verification codes and any other standalone six-digit number, booking confirmation codes, and payment links.</p>
-            <p>The Pawservation operator reads these transcripts to support customers, fix problems, and improve the service. Sitters don&rsquo;t see this archive.</p>
+            <p>The Pawservation operator reads these transcripts to support customers, fix problems, and improve the service. A sitter on Pro can also read the conversations her own clients had with the friendly AI assistant, on WhatsApp and in the chat on her booking page, from the day booking by message began (October 6, 2026). She sees only her own clients, can&rsquo;t edit or delete what was said, and never sees verification codes or payment links. She can&rsquo;t see what you ask your own AI assistant, or the conversations of any other sitter&rsquo;s clients. Your sitter can read what you and the assistant said to each other.</p>
             <p>Messages are also checked automatically for profanity, and a flagged word is recorded alongside the message, as a sign that someone may be having trouble. It is never used to make any decision about the person.</p>
           </div>
           <div class="feature">

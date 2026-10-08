@@ -738,7 +738,7 @@ describe('the landing page claims only what ships', () => {
 
   it('keeps the MCP/assistant-booking bullet on the Pro card', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/clients who use Claude can connect it and book with you/i);
+    expect(body).toMatch(/clients who use an AI assistant can connect it and book with you/i);
     // Owner repriced on 2026-09-04: the bullet's card is a product now, and the only thing the
     // page still may not do is offer a checkout it has no code for.
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);

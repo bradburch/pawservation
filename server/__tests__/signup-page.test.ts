@@ -137,6 +137,7 @@ describe('the sign-up pages read well', () => {
     configure(env);
     const body = await (await app.request('/signup', {}, env)).text();
     expect(body).toContain('start your 30-day free trial');
+    expect(body).toContain('Your 30-day free trial starts when you sign up. No card needed.');
     expect(body.match(/sign-up link/g)?.length ?? 0).toBeLessThanOrEqual(1);
   });
 

@@ -131,6 +131,9 @@ function renderSignupPage(
   const lead = opts.error
     ? `<p class="note signup-error" role="alert" style="margin:0 auto 8px;font-size:1rem;">${opts.error}</p>`
     : `<p class="note" style="margin:0 auto 8px;font-size:1rem;">${intro}</p>`;
+  const trial = review
+    ? ''
+    : `\n        <p class="note" style="margin:12px auto 0;">Your ${PRICING.trialDays}-day free trial starts when you sign up. No card needed.</p>`;
   return shell(
     'Pawservation: sign up',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">Sign up for Pawservation</h1>
@@ -140,7 +143,7 @@ function renderSignupPage(
           siteKey,
           attribution: opts.attribution,
           submitLabel: review ? 'Ask for an account' : 'Start my free trial',
-        })}`,
+        })}${trial}`,
     { turnstile: Boolean(siteKey) },
   );
 }
