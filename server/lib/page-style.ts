@@ -57,6 +57,8 @@ const RAW = /* css */ `
         --code-attr: #d8c98a;
         --nav-bg: #fbfaf6e0;
         --shadow: #17261c1f;
+        --field-bg: #2a4332;
+        --field-line: #f3f7f22e;
         --display: 'Fraunces', Georgia, 'Times New Roman', serif;
         --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
           Helvetica, Arial, sans-serif;
@@ -94,6 +96,8 @@ const RAW = /* css */ `
           --code-attr: #d8c98a;
           --nav-bg: #0f1912e0;
           --shadow: #0000008c;
+          --field-bg: #2a4332;
+          --field-line: #f3f7f22e;
         }
       }
       * { box-sizing: border-box; }
@@ -339,6 +343,7 @@ const RAW = /* css */ `
         gap: 12px;
         margin-bottom: 18px;
       }
+      @media (max-width:560px){.hero .cta-row .btn{flex:1 1 100%;text-align:center}}
       .note {
         margin: 0;
         font-size: 0.84rem;
@@ -1173,14 +1178,14 @@ const RAW = /* css */ `
         width: 100%;
         padding: 10px 12px;
         border-radius: 8px;
-        border: 1px solid color-mix(in srgb, var(--band-ink) 18%, transparent);
-        background: color-mix(in srgb, var(--band-ink) 6%, transparent);
+        border: 1px solid var(--field-line);
+        background: var(--field-bg);
         color: var(--band-ink);
         font-family: var(--sans);
         font-size: 0.92rem;
       }
       .signup-field input::placeholder,
-      .signup-field textarea::placeholder { color: var(--band-mute); }
+      .signup-field textarea::placeholder { color: var(--band-soft); }
       .signup-field input:focus,
       .signup-field select:focus,
       .signup-field textarea:focus {

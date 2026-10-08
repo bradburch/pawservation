@@ -54,6 +54,9 @@ const PAIRS: [string, string][] = [
   // The dark band and the embed snippet carry secondary text and syntax colors of their own.
   ['band-soft', 'band-bg'],
   ['band-mute', 'band-bg'],
+  // The sign-up form's fields on the band: typed text and the placeholder.
+  ['band-ink', 'field-bg'],
+  ['band-soft', 'field-bg'],
   ['band-mute', 'code-bg'],
   ['code-tag', 'code-bg'],
   ['code-attr', 'code-bg'],
@@ -63,6 +66,19 @@ describe('PAGE_STYLE: one token set, light and dark', () => {
   const blocks = [...PAGE_STYLE.matchAll(ROOT_BLOCK)].map((m) => m[1]);
   const light = tokens(blocks[0] ?? '');
   const dark = tokens(DARK.exec(PAGE_STYLE)?.[1] ?? '');
+
+  it('gives the sign-up fields solid tokens, not a color-mix() a browser may not support', () => {
+    const rule = PAGE_STYLE.match(/\.signup-field input,[^{]*\{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).toContain('background: var(--field-bg);');
+    expect(rule).toContain('border: 1px solid var(--field-line);');
+    expect(rule).not.toContain('color-mix');
+  });
+
+  it('stacks the hero buttons full width on a phone', () => {
+    expect(PAGE_STYLE).toMatch(
+      /@media \(max-width: ?560px\) ?\{ ?\.hero \.cta-row \.btn ?\{ ?flex: ?1 1 100%; ?text-align: ?center;? ?\} ?\}/,
+    );
+  });
 
   it('serves no CSS comments: internal notes stay in the source', async () => {
     expect(PAGE_STYLE).not.toContain('/*');
