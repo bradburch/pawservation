@@ -274,6 +274,60 @@ app.get('/setup.html', page('setup.html'));
  * genuinely contains no <script tag. Screenshot regeneration recipe (fixed 2028 seed months):
  * docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md.
  */
+/*
+ * Notes on the landing markup below, moved out of the template so none of them is served.
+ * Each is keyed by the element it sat above.
+ *
+ * [a class="signin nav-tour"] About joined the .nav-links row above and is deliberately NOT
+ *     repeated here: it is in the shared footer's Company block, so it stays reachable below 780px
+ *     without this row printing it a second time. Adding a fifth link did move one breakpoint; see
+ *     .nav-links-5 in PAGE_STYLE. .nav-links is display:none below 780px, which left the tour
+ *     reachable only from the footer on a phone. This copy sits OUTSIDE that row and shows only
+ *     where the row is hidden, so the link exists at every width and is never printed twice. The
+ *     two plain links beside it drop out at the same width, which is what keeps the header to
+ *     three items on a phone: sign-in is in the hero note and the footer, and the demo is the
+ *     hero's own second button.
+ * [p class="chip"] The chip is the price, not the category: the h1 and the sub below already say
+ *     what this is, and a shopper arrives holding an incumbent's monthly figure. The words are the
+ *     pricing section's own heading, so the hero and the pricing section cannot drift apart, and
+ *     every figure comes from PRICING rather than the markup.
+ * [div class="cta-row"] The one button on the page that names the trial (owner, 2026-10-08). Every
+ *     other button, the nav's included, reads "Sign up": the nav is one row on measured
+ *     breakpoints, and the rest sit beside the price that explains them.
+ * [div class="visual-panel"] Screenshots are captured from the seeded demo (fixed 2028 months,
+ *     never "today"). Regenerate via the recipe in docs/superpowers/specs/2026-07-19-landing-
+ *     marketing-redesign.md whenever the widget's look changes. The card's three nights at $150 is
+ *     the screenshot's own quote, and the WhatsApp example in #pro tells the same stay.
+ * [section class="section band"] Who it is for, in her clients' own words: each card is a question
+ *     she answers by text today and what answers it instead, with no figure the product cannot
+ *     back.
+ * [section class="section"] Three first-class paths, not a website and two footnotes. The link is
+ *     the /embed/:slug page itself, the one og-booking.png exists to unfurl when she texts it to a
+ *     client; WhatsApp is the Pro path and says so.
+ * [section class="section"] Booking by WhatsApp is Pro's headline, shown rather than described: a
+ *     coded phone (HTML and CSS on the page's own tokens, never WhatsApp's logo or brand green)
+ *     read as one illustration through its aria-label. Its stay is the hero's three nights at
+ *     $150. What this section claims is the whole of the integration: nothing about photos,
+ *     reminders or the assistant booking on its own, and no number handed to her by us. Card
+ *     payments and the back-office assistant follow as the two "Also on Pro" cards.
+ * [section class="section band"] Control, and the fear of a bot or a lost client. Everything the
+ *     page says about a client changing or cancelling their own booking lives HERE and nowhere
+ *     else, so the rule is read once, whole. .features-3 rather than bare .features: three cards
+ *     in the grid's 640-959px two-column band leave the third alone with an empty cell beside it.
+ * [div class="mockdash"] Coded mock of the dashboard's bookings queue (not a screenshot): stays
+ *     crisp at any scale and inherits the page palette. role="img" so assistive tech reads it as
+ *     one illustration, not fake buttons.
+ * [div class="features features-4"] Four short cards on one row. The grid is .features-4 rather
+ *     than .features because the three-column default left the fourth card orphaned on a row of
+ *     its own.
+ * [section class="section band"] Trust without invented proof: a founder line built only from what
+ *     /about states, and a testimonial slot that renders nothing until the owner adds a real,
+ *     permitted quote (server/lib/testimonials.ts). No counts, no ratings, no logos.
+ * [section class="section band"] The six objections the walks raised, collapsed: native <details>
+ *     needs no script, so it is allowed under the locked CSP, and a reader who does not open one
+ *     pays nothing for it. The website answer's id is ON its <details>, because Safari does not
+ *     open a closed details for a fragment that targets its contents.
+ */
 const LANDING_HTML = `<!doctype html>
 <html lang="en">
   <head>
@@ -302,16 +356,6 @@ const LANDING_HTML = `<!doctype html>
           <a href="/about">About</a>
         </nav>
         <div class="nav-right">
-          <!-- About joined the .nav-links row above and is deliberately NOT repeated here: it
-               is in the shared footer's Company block, so it stays reachable below 780px without
-               this row printing it a second time. Adding a fifth link did move one breakpoint;
-               see .nav-links-5 in PAGE_STYLE.
-               .nav-links is display:none below 780px, which left the tour reachable only from
-               the footer on a phone. This copy sits OUTSIDE that row and shows only where the
-               row is hidden, so the link exists at every width and is never printed twice. The
-               two plain links beside it drop out at the same width, which is what keeps the
-               header to three items on a phone: sign-in is in the hero note and the footer, and
-               the demo is the hero's own second button. -->
           <a class="signin nav-tour" href="/how-it-works">Full tour</a>
           <a class="signin nav-signin" href="/admin">Sign in</a>
           <a class="signin" href="/demo">Try the demo</a>
@@ -324,10 +368,6 @@ const LANDING_HTML = `<!doctype html>
       <section class="hero">
         <div class="wrap hero-grid">
           <div class="hero-copy">
-            <!-- The chip is the price, not the category: the h1 and the sub below already say
-                 what this is, and a shopper arrives holding an incumbent's monthly figure. The
-                 words are the pricing section's own heading, so the hero and the pricing section
-                 cannot drift apart, and every figure comes from PRICING rather than the markup. -->
             <p class="chip">$${PRICING.soloMonthly} a month. ${PRICING.trialDays}-day free trial.</p>
             <h1>Spend less time on booking texts and more time with the pets.</h1>
             <p class="sub">
@@ -335,9 +375,6 @@ const LANDING_HTML = `<!doctype html>
               them. On Pro they can simply message you on WhatsApp, and a friendly assistant answers.
               You confirm every booking with one tap.
             </p>
-            <!-- The one button on the page that names the trial (owner, 2026-10-08). Every other
-                 button, the nav's included, reads "Sign up": the nav is one row on measured
-                 breakpoints, and the rest sit beside the price that explains them. -->
             <div class="cta-row">
               <a class="btn btn-primary" href="/signup">Start your ${PRICING.trialDays}-day free trial</a>
               <a class="btn btn-ghost" href="/demo">Try the demo</a>
@@ -349,11 +386,6 @@ const LANDING_HTML = `<!doctype html>
             </p>
           </div>
           <div class="hero-visual">
-            <!-- Screenshots are captured from the seeded demo (fixed 2028 months, never
-                 "today"). Regenerate via the recipe in
-                 docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md whenever the
-                 widget's look changes. The card's three nights at $150 is the screenshot's own
-                 quote, and the WhatsApp example in #pro tells the same stay. -->
             <div class="visual-panel">
               <div class="screen">
                 <img
@@ -375,8 +407,6 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- Who it is for, in her clients' own words: each card is a question she answers by text
-           today and what answers it instead, with no figure the product cannot back. -->
       <section class="section band" id="fit" aria-labelledby="fit-h">
         <div class="wrap">
           <div class="section-head">
@@ -401,9 +431,6 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- Three first-class paths, not a website and two footnotes. The link is the /embed/:slug
-           page itself, the one og-booking.png exists to unfurl when she texts it to a client;
-           WhatsApp is the Pro path and says so. -->
       <section class="section" id="ways" aria-labelledby="ways-h">
         <div class="wrap">
           <div class="section-head">
@@ -479,18 +506,12 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- Booking by WhatsApp is Pro's headline, shown rather than described: a coded phone (HTML
-           and CSS on the page's own tokens, never WhatsApp's logo or brand green) read as one
-           illustration through its aria-label. Its stay is the hero's three nights at $150. What
-           this section claims is the whole of the integration: nothing about photos, reminders or
-           the assistant booking on its own, and no number handed to her by us. Card payments and
-           the back-office assistant follow as the two "Also on Pro" cards. -->
       <section class="section" id="pro" aria-labelledby="pro-h">
         <div class="wrap">
           <div class="section-head">
             <span class="label">On Pro</span>
             <h2 id="pro-h">Let clients book you on WhatsApp</h2>
-            <p>Clients message your business number the way they&rsquo;d text you. A friendly assistant answers with your open dates and your prices, takes the request, and sends it to your own WhatsApp with Confirm and Decline buttons. Your client hears your answer right away.</p>
+            <p>Clients message your business number the way they&rsquo;d text you. A friendly assistant answers with your open dates and your prices, takes the request, and sends it to your own WhatsApp with Confirm and Decline buttons. Your client gets an answer right away, and the final yes is yours.</p>
           </div>
           <div class="pro-grid">
             <div class="phone" role="img" aria-label="Example WhatsApp conversation. A client asks whether Biscuit can board from Saturday the 14th to Tuesday the 17th. The assistant says the dates are open and the price is $150 for three nights, and offers to send the request. The sitter gets an alert with Confirm and Decline buttons.">
@@ -530,7 +551,7 @@ const LANDING_HTML = `<!doctype html>
               <p>Take deposits, and let clients who choose to save a card pay what they owe after each stay. You pay Stripe&rsquo;s standard rate ${STRIPE_LINK}, Stripe pays you directly, and Pawservation takes no cut.</p>
             </div>
             <div class="feature">
-              <h3>An assistant for your back office</h3>
+              <h3>A helper for your back office</h3>
               <p>Ask who still owes you or what next week looks like, and get the answer from your own records.</p>
             </div>
           </div>
@@ -541,10 +562,6 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- Control, and the fear of a bot or a lost client. Everything the page says about a client
-           changing or cancelling their own booking lives HERE and nowhere else, so the rule is read
-           once, whole. .features-3 rather than bare .features: three cards in the grid's 640-959px
-           two-column band leave the third alone with an empty cell beside it. -->
       <section class="section band" id="clients" aria-labelledby="clients-h">
         <div class="wrap">
           <div class="section-head">
@@ -580,9 +597,6 @@ const LANDING_HTML = `<!doctype html>
             <h2 id="dash-h">Your bookings and your money in one place</h2>
             <p>Collect money however you already do, and Pawservation keeps the count.</p>
           </div>
-          <!-- Coded mock of the dashboard's bookings queue (not a screenshot): stays
-               crisp at any scale and inherits the page palette. role="img" so assistive
-               tech reads it as one illustration, not fake buttons. -->
           <div
             class="mockdash"
             role="img"
@@ -626,8 +640,6 @@ const LANDING_HTML = `<!doctype html>
               </div>
             </div>
           </div>
-          <!-- Four short cards on one row. The grid is .features-4 rather than .features
-               because the three-column default left the fourth card orphaned on a row of its own. -->
           <div class="features features-4">
             <div class="feature">
               <h3>Services and rates</h3>
@@ -649,9 +661,6 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- Trust without invented proof: a founder line built only from what /about states, and a
-           testimonial slot that renders nothing until the owner adds a real, permitted quote
-           (server/lib/testimonials.ts). No counts, no ratings, no logos. -->
       <section class="section band" id="story" aria-labelledby="story-h">
         <div class="wrap">
           <div class="section-head story-head">
@@ -705,8 +714,8 @@ const LANDING_HTML = `<!doctype html>
                 <li>Everything in Solo</li>
                 <li>Booking by WhatsApp on your own business number, with a friendly assistant and Confirm and Decline alerts</li>
                 <li>Card payments through your own Stripe account, with no cut for Pawservation</li>
-                <li>Back-office assistant: ask who owes you and what your week looks like</li>
-                <li>Clients can book through their own assistant, such as Claude</li>
+                <li>A back-office helper that tells you who owes you and what your week looks like</li>
+                <li>Clients who use Claude or ChatGPT can book through it too</li>
               </ul>
               <a class="btn btn-primary" href="/signup">Sign up</a>
               <p class="note">$${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year. Paying yearly saves $${PRICING.proMonthly * 12 - PRICING.proAnnual}.</p>
@@ -716,10 +725,6 @@ const LANDING_HTML = `<!doctype html>
         </div>
       </section>
 
-      <!-- The six objections the walks raised, collapsed: native <details> needs no script, so it
-           is allowed under the locked CSP, and a reader who does not open one pays nothing for it.
-           The website answer's id is ON its <details>, because Safari does not open a closed
-           details for a fragment that targets its contents. -->
       <section class="section band" id="faq" aria-labelledby="faq-h">
         <div class="wrap">
           <div class="section-head">
@@ -1286,7 +1291,7 @@ const PRIVACY_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>Conversations with Pro&rsquo;s AI features</h2>
-            <p>When a client or a sitter uses one of Pro&rsquo;s AI features, we keep a transcript of the messages they send and the assistant&rsquo;s replies, stored on Pawservation&rsquo;s own systems. That covers the chat assistant on a sitter&rsquo;s booking page, booking by WhatsApp message, and the sitter&rsquo;s back-office assistant. When a client connects their own AI assistant (Claude, for example), we keep only what that assistant sends to Pawservation (its requests and our answers), not the client&rsquo;s own conversation with their assistant.</p>
+            <p>When a client or a sitter uses one of Pro&rsquo;s AI features, we keep a transcript of the messages they send and the assistant&rsquo;s replies, stored on Pawservation&rsquo;s own systems. That covers the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office assistant. When a client connects their own AI assistant (Claude, for example), we keep only what that assistant sends to Pawservation (its requests and our answers), not the client&rsquo;s own conversation with their assistant.</p>
             <p>Before a transcript is stored, we remove verification codes and any other standalone six-digit number, booking confirmation codes, and payment links.</p>
             <p>The Pawservation operator reads these transcripts to support customers, fix problems, and improve the service. Sitters don&rsquo;t see this archive.</p>
             <p>Messages are also checked automatically for profanity, and a flagged word is recorded alongside the message, as a sign that someone may be having trouble. It is never used to make any decision about the person.</p>
@@ -1298,7 +1303,7 @@ const PRIVACY_HTML = `<!doctype html>
             <p><strong>Resend</strong> sends our email (login codes, sign-up links, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing.</p>
             <p><strong>Google</strong> only sees booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, cost, and the client&rsquo;s email address.</p>
             <p><strong>Stripe</strong> processes a sitter&rsquo;s Pawservation subscription; the card for it is entered on Stripe&rsquo;s own page, and we never see the card number. On Pro, a client&rsquo;s card payment is also processed by Stripe, under the sitter&rsquo;s own Stripe account.</p>
-            <p><strong>Anthropic</strong> provides the AI model behind Pro&rsquo;s booking chat, booking by message, and the sitter&rsquo;s assistant. When someone uses one of those, what they type and the booking details needed to answer them (dates, pets, prices) are sent to Anthropic&rsquo;s model to write the reply. A client who connects their own AI assistant uses that assistant&rsquo;s model, not ours.</p>
+            <p><strong>Anthropic</strong> provides the AI model behind the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office assistant. When someone uses one of those, what they type and the booking details needed to answer them (dates, pets, prices) are sent to Anthropic&rsquo;s model to write the reply. A client who connects their own AI assistant uses that assistant&rsquo;s model, not ours.</p>
             <p><strong>Meta</strong> carries WhatsApp messages, only if a sitter on Pro connects WhatsApp: a client&rsquo;s messages to that sitter and the replies pass through Meta&rsquo;s WhatsApp service.</p>
           </div>
           <div class="feature">

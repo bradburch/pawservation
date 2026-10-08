@@ -150,7 +150,7 @@ function renderSignupPage(
 function renderSentPage(mode: SignupMode, prototypeLink?: string): string {
   const open = mode === 'open';
   const copy = open
-    ? 'If that address can sign up, your link is on its way. It works for 30 minutes.'
+    ? 'We&rsquo;ve sent a sign-up link to that address if it&rsquo;s new to Pawservation. It works for 30 minutes. Nothing there? Check your spam folder, or try again in a few minutes.'
     : 'We&rsquo;ll email you within a day, once your account is ready.';
   const dev = prototypeLink
     ? `<p class="note" style="margin:12px auto 0;"><a href="${htmlEscape(prototypeLink)}">Open your sign-up link (local development)</a></p>`

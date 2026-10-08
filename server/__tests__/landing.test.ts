@@ -65,7 +65,7 @@ describe('GET / — landing page', () => {
     expect(pro).toContain('Confirm and Decline');
     expect(pro).toContain('href="/getting-started/whatsapp"');
     expect(pro).toContain('<h3>Card payments through your own Stripe account</h3>');
-    expect(pro).toContain('<h3>An assistant for your back office</h3>');
+    expect(pro).toContain('<h3>A helper for your back office</h3>');
     expect(pro).toContain('href="https://stripe.com/pricing"');
     expect(pro.toLowerCase()).not.toContain('whatsapp logo');
     expect(pro).not.toMatch(/<img[^>]+whatsapp/i);

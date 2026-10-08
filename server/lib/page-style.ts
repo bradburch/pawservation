@@ -977,6 +977,8 @@ export const PAGE_STYLE = /* css */ `
       }
       /* Two cards read as a pair: the three-column default would leave an empty third column. */
       @media (min-width: 960px) { .features-2 { grid-template-columns: 1fr 1fr; } }
+      /* The guide's "Which number?" pair is two short cards: side by side from a phone-landscape width. */
+      @media (min-width: 640px) { .legal .features-2 { grid-template-columns: 1fr 1fr; } }
 
       /* The setup hub's guide cards: a whole-card link, so no underline and a border that answers
          the pointer. The "Which number?" pair on the WhatsApp guide nests two .feature cards in a

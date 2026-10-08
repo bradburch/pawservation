@@ -213,7 +213,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `Everything in Solo plus booking by WhatsApp with a booking assistant, card payments through the sitter's own Stripe account, and a back-office assistant, $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year.`,
+            description: `Everything in Solo plus booking by WhatsApp with a booking assistant, card payments through the sitter's own Stripe account, and a back-office helper, $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year.`,
           },
         ],
         publisher: { '@id': `${origin}/#organization` },

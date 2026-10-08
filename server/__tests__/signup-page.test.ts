@@ -145,6 +145,10 @@ describe('the sign-up pages read well', () => {
     configure(env);
     const body = await (await app.request('/signup/sent', {}, env)).text();
     expect(body.match(/Check your email/g)).toHaveLength(2); // <title> and <h1>, never the body copy
+    expect(body).toContain(
+      'We&rsquo;ve sent a sign-up link to that address if it&rsquo;s new to Pawservation.',
+    );
+    expect(body).toContain('Check your spam folder');
     expect(body).toContain('href="/getting-started"');
     // The guide link resolves (the page is a worker route, not an asset).
     expect((await app.request('/getting-started', {}, env)).status).toBe(200);

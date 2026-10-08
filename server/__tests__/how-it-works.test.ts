@@ -725,7 +725,7 @@ describe('the landing page claims only what ships', () => {
 
   it('keeps the MCP/assistant-booking bullet on the Pro card', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/their own assistant, such as Claude/);
+    expect(body).toMatch(/clients who use Claude or ChatGPT can book through it too/i);
     // Owner repriced on 2026-09-04: the bullet's card is a product now, and the only thing the
     // page still may not do is offer a checkout it has no code for.
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);
@@ -735,7 +735,7 @@ describe('the landing page claims only what ships', () => {
     const body = await landingBody();
     // The "which pet combinations have no price" clause went with the September 2026 landing
     // trim: it is codebase vocabulary on a pricing card. The bullet itself is what stays pinned.
-    expect(body).toMatch(/back-office assistant.*who owes you.*your week/i);
+    expect(body).toMatch(/back-office helper.*who owes you.*your week/i);
     // Owner repriced on 2026-09-04: same rule as the sibling test above, no checkout on the page.
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);
   });
