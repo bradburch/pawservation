@@ -30,7 +30,7 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   may be described as available either, with one standing exception the owner made on 2026-09-04:
   the Pro tier is presented as sold. No page may offer a checkout, a card form or a trial mechanic:
   this repo's billing code only records the plan premium reports (`POST
-  /api/:slug/admin/billing/events`) and sends a signed-in sitter from the dashboard's plan panel to
+/api/:slug/admin/billing/events`) and sends a signed-in sitter from the dashboard's plan panel to
   premium's Stripe checkout, so a marketing page has no checkout to offer.
   Booking by WhatsApp is sold as part of Pro on the owner's instruction (2026-10-05), and the copy
   claims only what it does: clients message the sitter's own number to book, get a quote,
@@ -342,10 +342,10 @@ Matching the named entity alone was blind to 36 raw dashes — 24 of them served
 
 Two purpose-built 1200x630 PNGs, **split by AUDIENCE, and that split is the point**:
 
-| File                        | Declared by                              | Reader                                    |
-| --------------------------- | ---------------------------------------- | ----------------------------------------- |
+| File                        | Declared by                               | Reader                                    |
+| --------------------------- | ----------------------------------------- | ----------------------------------------- |
 | `public/img/og-card.png`    | `pageHead` (all nine pages) + `demo.html` | a prospective **sitter**, being recruited |
-| `public/img/og-booking.png` | `embedCardTags` on `/embed/:slug`        | a **pet owner** texted her sitter's link  |
+| `public/img/og-booking.png` | `embedCardTags` on `/embed/:slug`         | a **pet owner** texted her sitter's link  |
 
 The most-shared link this product has is a sitter texting a client her own booking page, and that
 reader is booking her dog in, not choosing software. **The image and the card type move together or

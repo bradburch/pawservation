@@ -175,7 +175,9 @@ describe('what each guide must say', () => {
     const done = body.slice(body.indexOf('id="done"'), body.indexOf('id="costs"'));
     // Premium answers an unknown sender with a fixed reply, and emails a recognised
     // client a code the first time they message, so the friend must be a client first.
-    expect(done).toContain('Add a friend as a client in <strong>Clients</strong>, with their mobile number.');
+    expect(done).toContain(
+      'Add a friend as a client in <strong>Clients</strong>, with their mobile number.',
+    );
     expect(done).toContain('they&rsquo;re emailed a code');
     expect(done).toContain('&ldquo;Are you free next Saturday?&rdquo;');
     expect(done.indexOf('Add a friend')).toBeLessThan(done.indexOf('Are you free next Saturday'));
