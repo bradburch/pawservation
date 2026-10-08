@@ -72,6 +72,7 @@ describe('the plan panel during the signup trial', () => {
 
   it('says the trial is Solo, and Pro features need Pro', () => {
     expect(PANEL).toMatch(/need Pro/);
+    expect(PANEL).toContain('Pro features are switched on for your account.');
   });
 
   it('the settings read publishes CompedUntil verbatim', async () => {

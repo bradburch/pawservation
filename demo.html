@@ -9,19 +9,15 @@
     <title>Try the demo — Pawservation</title>
     <meta
       name="description"
-      content="Try Pawservation free, with no sign-up: a working booking widget for a made-up pet sitting and dog walking business — pick a service, pick dates, see the quote."
+      content="Try Pawservation free, with no sign-up: working booking widgets for two made-up pet sitting and dog walking businesses — pick a service, pick dates, see the quote."
     />
     <link rel="canonical" href="https://pawservation.com/demo" />
-    <!-- Hand-written twins of what `pageHead` (server/index.ts) emits for the worker-rendered
-         pages: this one is a Vite-built static file, so it cannot call that helper. `summary`
-         sharing its 1200x630 og-card.png, for the reasons spelled out there. server/__tests__/seo.test.ts pins
-         the two in step. -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Pawservation" />
     <meta property="og:title" content="Try the demo — Pawservation" />
     <meta
       property="og:description"
-      content="Try Pawservation free, with no sign-up: a working booking widget for a made-up pet sitting and dog walking business — pick a service, pick dates, see the quote."
+      content="Try Pawservation free, with no sign-up: working booking widgets for two made-up pet sitting and dog walking businesses — pick a service, pick dates, see the quote."
     />
     <meta property="og:url" content="https://pawservation.com/demo" />
     <meta property="og:image" content="https://pawservation.com/img/og-card.png" />
@@ -159,11 +155,9 @@
       <h1>Pawsome Site Builder</h1>
     </header>
     <p class="note">
-      Everything below the bar above is a mock-up — a stand-in for a customer's own CMS website, not
-      part of Pawservation. Each column embeds a different tenant's widget via the real
-      <code>/embed.js</code> loader — same dates, different branding, rates, capacity, and data. To
-      sign in and book, use <strong>jess@example.com</strong> — you'll get a 6-digit code on screen
-      instead of by email.
+      This is what your clients see. The two booking pages below belong to two made-up sitters,
+      shown on a sample website. To sign in and book, use <strong>jess@example.com</strong>: your
+      code appears on screen instead of by email. Nothing you book here is real.
     </p>
     <main class="columns">
       <section class="column">
@@ -176,7 +170,6 @@
       </section>
     </main>
     <div id="toast"></div>
-    <!-- External file (not inline) so the demo page works under the locked CSP. -->
     <script src="/demo-host.js"></script>
   </body>
 </html>

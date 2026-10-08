@@ -94,6 +94,8 @@ describe('SEO surface', () => {
       '/about',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
       // The pair has to agree. `summary_large_image` crops to roughly 1.91:1, and the only
@@ -272,9 +274,9 @@ describe('SEO surface', () => {
     expect(body).toContain('not a marketplace');
     // The owner repriced on 2026-09-04: the Status section states both tiers, and the two limits
     // above are scoped to Solo rather than to the product.
-    expect(body).toContain('Solo is $15 a month. Pro is $29 a month or $290 a year, per sitter.');
+    expect(body).toContain('Solo is $15 a month. Pro is $29 a month or $290 a year.');
     expect(body).toContain('The 30-day free trial is Solo, with no card needed to start it.');
-    expect(body).toContain('Staffing a team on Solo');
+    expect(body).toContain('Staffing a team. Each account is one sitter.');
     // Live addresses, so the origin is the one the reader arrived at.
     expect(body).toContain('http://localhost/embed/{sitter-slug}/llms.txt');
   });
@@ -363,7 +365,14 @@ describe('SEO surface', () => {
     const contact = await (await app.request('/contact', {}, env)).text();
     expect(contact).toContain(org.email);
     // One entity, one page. Repeating the graph on /privacy would give a crawler four candidates.
-    for (const path of ['/how-it-works', '/privacy', '/terms', '/getting-started']) {
+    for (const path of [
+      '/how-it-works',
+      '/privacy',
+      '/terms',
+      '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
+    ]) {
       expect(await (await app.request(path, {}, env)).text(), path).not.toContain('ld+json');
     }
   });
@@ -480,6 +489,8 @@ describe('SEO surface', () => {
       '/terms',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
       const markup = body.replace(/<style>[\s\S]*?<\/style>/g, '');
@@ -576,6 +587,8 @@ describe('SEO surface', () => {
       '/privacy',
       '/terms',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
       '/signup',
       '/signup/sent',
     ]) {
@@ -631,9 +644,9 @@ describe('SEO surface', () => {
   it('keeps the three shared-stylesheet rules whose absence is invisible', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();
-    // 1. The focus ring is --green, which is 1.83:1 against the CTA panel's dark gradient and
-    //    reads as no ring at all. The panel holds the invite form's submit button.
-    expect(body).toContain('.cta-panel :focus-visible { outline-color: #fff; }');
+    // 1. The focus ring is --link, which in the light scheme is under 2:1 against the CTA panel's
+    //    dark band and reads as no ring at all. The panel holds the page's primary action.
+    expect(body).toContain('.cta-panel :focus-visible { outline-color: var(--band-ink); }');
     // 2. A <button> inherits neither font-family nor line-height from body, and the invite form's
     //    submit is the one .btn on this site that is not an <a>. Without these it rendered in
     //    Arial at 39px beside a 46px .btn-inverse doing the same job on /how-it-works.
@@ -655,6 +668,8 @@ describe('SEO surface', () => {
       '/about',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ]) {
       const body = await (await app.request(path, {}, env)).text();
       expect(body, path).toContain('href="/about"');
@@ -698,6 +713,8 @@ describe('SEO surface', () => {
       '/about',
       '/contact',
       '/getting-started',
+      '/getting-started/whatsapp',
+      '/getting-started/card-payments',
     ])
       pages.push({ label: path, body: await (await app.request(path, {}, env)).text() });
     // The sign-up pages render from server/routes/signup-page.ts rather than from pageHead, so they

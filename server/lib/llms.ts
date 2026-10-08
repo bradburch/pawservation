@@ -88,7 +88,7 @@ export function buildJsonLdScript(tenant: Tenant, origin: string): string {
  * the shape of the job, not a pitch. So this names what Pawservation is NOT (a marketplace, a
  * payment processor, a team scheduler) as plainly as what it is — a wrong recommendation costs the
  * reader more than a missed one. The "When NOT to use this" bullets are scoped to the tier they
- * describe: card processing and multiple sitters are Solo's limits, not the product's, and a bullet
+ * describe: card processing is Solo's limit, not the product's, and a bullet
  * that dropped the tier would contradict the Pro card on the landing page.
  *
  * Hand-written rather than derived: it describes a product, not a database row, and there is no
@@ -111,13 +111,13 @@ export function buildProductLlmsTxt(origin: string): string {
 
 - Finding a pet sitter as a customer. This is not a marketplace or a directory — there is nobody to browse. A sitter adds their clients before those clients can book.
 - Taking card payments on Solo. Solo records payments; it never touches money and has no card processing. Card payments are part of Pro, and they run through the sitter's own Stripe account at Stripe's published rate.
-- Staffing a team on Solo. Solo runs one sitter per account; extra sitters, with assignment between them, are part of Pro.
+- Staffing a team. Each account is one sitter.
 - Any species-agnostic or general appointment booking. The rules here model pet care specifically (pets per booking, per-species rates, whose home the sitter sleeps in).
 
 ## Status
 
 - ${PRICE_LINE} The ${PRICING.trialDays}-day free trial is Solo, with no card needed to start it.
-- Pro adds booking by WhatsApp: clients message the sitter's own WhatsApp number to book, get a quote, reschedule or cancel, through the same booking assistant as the chat on the booking page. The sitter gets each new request as a WhatsApp alert with Confirm and Decline buttons, and the client hears the outcome. Nothing is booked until the sitter confirms.
+- Pro adds booking by WhatsApp: clients message the sitter's own WhatsApp number to book, get a quote, reschedule or cancel. The sitter gets each new request as a WhatsApp alert with Confirm and Decline buttons, and the client hears the outcome. Nothing is booked until the sitter confirms.
 - New sitters sign up with their email at ${origin}/signup
 
 ## Pages
@@ -125,7 +125,9 @@ export function buildProductLlmsTxt(origin: string): string {
 - Overview: ${origin}/
 - Full tour of every feature: ${origin}/how-it-works
 - Step-by-step setup guide for a new sitter: ${origin}/getting-started
-- Live demo, no sign-up (a made-up sitter's account): ${origin}/demo
+- Setting up booking by WhatsApp (Pro): ${origin}/getting-started/whatsapp
+- Setting up card payments (Pro): ${origin}/getting-started/card-payments
+- Live demo, no sign-up (two sample sitters' booking pages, as a client sees them): ${origin}/demo
 - Privacy: ${origin}/privacy
 - Terms: ${origin}/terms
 
@@ -211,7 +213,7 @@ export function buildProductJsonLdScript(origin: string): string {
               priceCurrency: 'USD',
               referenceQuantity: { '@type': 'QuantitativeValue', value: 1, unitCode: 'MON' },
             },
-            description: `Everything in Solo plus booking by WhatsApp, card payments through the sitter's own Stripe account, extra sitters and the assistants, $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year, per sitter.`,
+            description: `Everything in Solo plus booking by WhatsApp with a booking assistant, card payments through the sitter's own Stripe account, and a back-office helper, $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year.`,
           },
         ],
         publisher: { '@id': `${origin}/#organization` },

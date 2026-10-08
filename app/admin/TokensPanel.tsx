@@ -140,11 +140,12 @@ export function TokensPanel({
     <>
       <h3>Access tokens</h3>
       <p className="pb-hint">
-        A token acts as your sign-in for this dashboard&apos;s API, so a script or another tool can
-        work as you: it can do everything you can here, including deleting clients and exporting
-        your book, and it never expires. It cannot create, list or revoke other tokens; only your
-        password can. Revoke it here the moment you suspect it leaked — or a script can revoke its
-        own token when it is finished, with{' '}
+        A token lets another tool work as you when you&rsquo;re not signed in. Pro&rsquo;s card
+        payments and booking by WhatsApp each need one: make a separate token for each, named after
+        what it&rsquo;s for, and paste it where that feature asks. A token can do everything you can
+        here, including deleting clients and exporting your book, and it never expires. It cannot
+        create, list or revoke other tokens; only your password can. Revoke it here the moment you
+        suspect it leaked — or a script can revoke its own token when it is finished, with{' '}
         <code>DELETE /api/{session.slug}/admin/tokens/self</code>.
       </p>
       {created ? (
@@ -194,7 +195,7 @@ export function TokensPanel({
             type="text"
             value={name}
             maxLength={MAX_NAME_LENGTH}
-            placeholder="What is this token for? e.g. Booking sync script"
+            placeholder="What is this token for? e.g. Card payments"
             aria-label="Token name"
             onChange={(e) => setName(e.target.value)}
           />

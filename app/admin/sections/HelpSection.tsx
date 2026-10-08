@@ -63,12 +63,14 @@ export function HelpSection() {
 
       <h3>Getting paid</h3>
       <p>
-        Pawservation doesn&rsquo;t process payments — no card fees, nobody holding your money. You
-        collect the way you already do: cash, Venmo, Zelle, PayPal, check. Each booking shows an
-        estimated cost from your rates; when a client pays, open the booking&rsquo;s Payments and
-        record it — the full amount, a deposit, or a partial. <a href="#earnings">Earnings</a> does
-        the rest: month-by-month revenue, who still owes you, and your top clients, all built from
-        what you record.
+        On Solo, Pawservation doesn&rsquo;t process cards: you collect the way you already do, cash,
+        Venmo, Zelle, PayPal or a check. On Pro you can also take deposits and card payments through
+        your own Stripe account; the{' '}
+        <a href="/getting-started/card-payments">card payments guide</a> shows how. Each booking
+        shows an estimated cost from your rates; when a client pays, open the booking&rsquo;s
+        Payments and record it — the full amount, a deposit, or a partial.{' '}
+        <a href="#earnings">Earnings</a> does the rest: month-by-month revenue, who still owes you,
+        and your top clients, all built from what you record.
       </p>
 
       <h3>Your website</h3>

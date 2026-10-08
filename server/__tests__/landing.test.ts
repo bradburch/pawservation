@@ -2,13 +2,13 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import app from '../index';
+import { testimonialsHtml } from '../lib/testimonials';
 import { createTestEnv } from './helpers';
 
 const IMG_DIR = join(import.meta.dirname, '..', '..', 'public', 'img', 'landing');
 
-// Per-file byte budgets from the landing-marketing-redesign spec — the weight budget is a
-// failing test, not a convention. Regeneration recipe lives in
-// docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md.
+// Per-file byte budgets: the weight budget is a failing test, not a convention. How to retake the
+// four shots, inside the booking window and within these budgets, is docs/landing-screenshots.md.
 const IMG_BUDGETS_KB: Record<string, number> = {
   'widget-hero.webp': 90,
   'step-services.webp': 40,
@@ -39,6 +39,108 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('Pawbook');
   });
 
+  it('reads top to bottom in the order the spec sets', async () => {
+    const body = await landingBody();
+    const ids = ['fit', 'ways', 'how', 'pro', 'clients', 'dashboard', 'story', 'pricing', 'faq'];
+    let last = body.indexOf('<h1>');
+    for (const id of ids) {
+      const at = body.indexOf(`id="${id}"`);
+      expect(at, id).toBeGreaterThan(last);
+      last = at;
+    }
+    expect(body).toContain(
+      '<h1>Spend less time on booking texts and more time with the pets.</h1>',
+    );
+    expect(body).toContain('No card needed to start.');
+  });
+
+  it('shows booking by WhatsApp with a coded, labelled example and no brand assets', async () => {
+    const body = await landingBody();
+    const pro = body.slice(body.indexOf('id="pro"'), body.indexOf('id="clients"'));
+    expect(pro).toContain('<h2 id="pro-h">Let clients book you on WhatsApp</h2>');
+    expect(pro).toMatch(
+      /<div class="phone" role="img" aria-label="Example WhatsApp conversation\./,
+    );
+    expect(pro).toContain('Confirm and Decline');
+    expect(pro).toContain('href="/getting-started/whatsapp"');
+    expect(pro).toContain('<h3>Card payments through your own Stripe account</h3>');
+    expect(pro).toContain('<h3>A helper for your back office</h3>');
+    expect(pro).toContain('href="https://stripe.com/pricing"');
+    expect(pro.toLowerCase()).not.toContain('whatsapp logo');
+    expect(pro).not.toMatch(/<img[^>]+whatsapp/i);
+  });
+
+  it('tells one boarding story: the phone example, the hero card and its screenshot agree', async () => {
+    const body = await landingBody();
+    // The hero screenshot is a three-night stay, Sat 14 to Tue 17, quoted at $150, and the coded
+    // card over it says so. The WhatsApp example is the same stay told by message, so a reader
+    // never meets two boarding rates on one page.
+    expect(body).toContain(
+      'a three-night boarding stay selected, Saturday the 14th to Tuesday the 17th',
+    );
+    expect(body).toContain(
+      '<span class="req-what">Boarding &middot; 3 nights &middot; $150</span>',
+    );
+    const pro = body.slice(body.indexOf('id="pro"'), body.indexOf('id="clients"'));
+    expect(pro).toContain('Boarding for Biscuit is $150 for 3 nights.');
+    expect(pro).toContain('the price is $150 for three nights');
+    expect(pro).not.toMatch(/2 nights|two nights/);
+  });
+
+  it('answers six objections in closed details, the website one reachable by its own id', async () => {
+    const body = await landingBody();
+    const faq = body.slice(body.indexOf('id="faq"'), body.indexOf('class="cta-band"'));
+    expect(faq.match(/<details\b/g)?.length).toBe(6);
+    expect(faq).not.toMatch(/<details[^>]*\bopen\b/);
+    // The id is ON the details element: Safari does not open a closed details for a fragment that
+    // targets its contents, so an id inside it would scroll to nothing visible.
+    expect(faq).toMatch(/<details[^>]*id="faq-website"/);
+    const website = faq.slice(faq.indexOf('id="faq-website"'));
+    const answer = website.slice(0, website.indexOf('</details>'));
+    // Persona round, 2026-10-08: the code block read as web-developer noise to a sitter with no
+    // website. The answer links the guide's step instead; the tour and the dashboard keep the code.
+    expect(answer).not.toContain('&lt;script');
+    expect(answer).not.toContain('embed.js');
+    expect(answer).toContain(
+      '<a href="/getting-started#booking-page">Add it to your website, step by step</a>',
+    );
+    expect(body).toContain('href="#faq-website"');
+  });
+
+  it('carries proof only when it is real', async () => {
+    const body = await landingBody();
+    const story = body.slice(body.indexOf('id="story"'), body.indexOf('id="pricing"'));
+    expect(story).toContain('href="/about"');
+    expect(story).toContain('href="/demo"');
+    // TESTIMONIALS is empty in this branch, and an empty list emits no quote markup.
+    expect(story).not.toContain('<figure');
+    expect(story).not.toContain('<blockquote');
+  });
+
+  it('escapes a testimonial the day one is added', () => {
+    const html = testimonialsHtml([
+      { quote: 'Fewer texts <b>at last</b> & more walks', name: 'Ana', business: 'A&B Walks' },
+    ]);
+    expect(html).toContain('<figure class="quote"><blockquote>');
+    expect(html).toContain('Fewer texts &lt;b&gt;at last&lt;/b&gt; &amp; more walks');
+    expect(html).toContain('<figcaption>Ana, A&amp;B Walks</figcaption>');
+    expect(html).not.toContain('<b>');
+    expect(testimonialsHtml([])).toBe('');
+  });
+
+  it('names the trial on the hero button alone; every other button still reads Sign up', async () => {
+    const body = await landingBody();
+    // Owner decision, 2026-10-08: the hero's primary button may name the trial. The nav, the
+    // section buttons, the price cards and the closing band stay "Sign up", because the nav is one
+    // row on measured breakpoints and the other buttons sit beside the price that explains them.
+    expect(body).toContain(
+      '<a class="btn btn-primary" href="/signup">Start your 30-day free trial</a>',
+    );
+    expect(body.match(/Start your 30-day free trial/g)?.length).toBe(1);
+    const nav = body.slice(body.indexOf('<header class="nav">'), body.indexOf('</header>'));
+    expect(nav).toContain('<a class="btn btn-primary btn-sm" href="/signup">Sign up</a>');
+  });
+
   it('mentions the Venmo CSV import on the Payments card', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();
@@ -61,15 +163,18 @@ describe('GET / — landing page', () => {
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
   });
 
-  it('shows the embed snippet as escaped text only', async () => {
+  it('keeps the embed snippet off the landing page; the tour and the guide carry it', async () => {
     const body = await landingBody();
-    expect(body).toContain('&lt;script');
-    expect(body).toContain('data-pawservation-tenant');
+    // Persona round, 2026-10-08: a sitter with no website read the code as noise.
+    expect(body).not.toContain('&lt;script');
+    expect(body).not.toContain('data-pawservation-tenant');
   });
 
   it('sends every Sign up straight to /signup: no form here, no anchor hop, no mailto', async () => {
     const body = await landingBody();
-    expect(body).not.toMatch(/href="mailto:/);
+    // No button is a mailto. The one mailto on the page is Pro's setup offer (owner, 2026-10-08).
+    expect(body).not.toMatch(/class="btn[^"]*" href="mailto:/);
+    expect(body.match(/href="mailto:/g)).toHaveLength(1);
     // One page, one form: a form here made the sitter submit twice (here, then the challenge).
     expect(body).not.toMatch(/<form\b/);
     expect(body).not.toContain('href="#invite-h"');
@@ -140,12 +245,12 @@ describe('GET / — landing page', () => {
     expect(body).not.toContain('up to 500');
   });
 
-  it('never implies Solo runs a team, and keeps the limit stated on the tour', async () => {
+  it('never implies a team product, and keeps one sitter per account stated on the tour', async () => {
     // The owner removed "Can my whole team use it?" from the landing page: it is a question a
     // sitter asks once she is interested, and the page's job is to get her to ask for an invite.
-    // The limit itself did not go anywhere — /how-it-works now states it beside the other thing
-    // that isn't built (the repeating schedule), which is where the honesty pages live. What the
-    // landing page must still never do is claim the thing it can't do.
+    // The limit itself did not go anywhere: every account is one sitter on every plan, and
+    // /how-it-works states it in its "Good to know" section. What the landing page must still
+    // never do is claim the thing it can't do.
     const body = await landingBody();
     expect(body).not.toContain('Can my whole team use it?');
     for (const unbuilt of ['your team can', 'add your sitters', 'invite your team', 'per seat'])
@@ -153,10 +258,10 @@ describe('GET / — landing page', () => {
     // The owner repriced on 2026-09-04: Pro is sold, so the unbuilt framing is gone from the card.
     expect(body).not.toContain('Not available yet');
     expect(body).not.toContain('it isn&rsquo;t built yet');
-    // …and the tour still names the tier the one-sitter limit belongs to.
+    // …and the tour still says every account is one sitter.
     const { env } = createTestEnv();
     const tour = await (await app.request('/how-it-works', {}, env)).text();
-    expect(tour).toContain('Solo runs one sitter per account');
+    expect(tour).toContain('Pawservation is made for one person running her own book.');
   });
 
   it('tells visitors the demo costs them nothing to try', async () => {
@@ -183,8 +288,8 @@ describe('GET / — landing page', () => {
     expect(chip).toBeLessThan(body.indexOf('<h1>'));
     expect(chip).toBeLessThan(body.indexOf('<p class="note">'));
     // The hero says what the pricing section says. 2026-10-05: one wording everywhere (PRICE_LINE),
-    // so Solo is "$15 a month" with no qualifier: Solo is one sitter by definition, and "per
-    // sitter" belongs to Pro, which sells extra sitters.
+    // so Solo is "$15 a month" with no qualifier: every account is one sitter, and no plan sells
+    // extra sitters, so nothing is priced "per sitter".
     expect(body).toContain('<h2 id="pricing-h">$15 a month</h2>');
     expect(body).toContain('<span class="price-per">a month</span>');
     // $15 is a standing price, not a discount with a clock on it. The 30-day trial the owner added
@@ -198,16 +303,12 @@ describe('GET / — landing page', () => {
     const body = await landingBody();
     // The two-column grid this section used to carry was cut by the owner on 2026-09-09 ("a lot of
     // text and it reads as AI slop"), taking the "dates question stops being a text" pair and the
-    // "not about the dog" line with it. What survives is the claim that mattered and the bans that
-    // protected it: the page must NAME the category feature it doesn't have. Time To Pet's
-    // headline is the visit report; a page arguing that software improves the client relationship,
-    // which never mentions the one incumbent feature actually about the animal, argues against
-    // itself.
-    expect(body).toContain('doesn&rsquo;t do visit reports or photos');
+    // "not about the dog" line with it. The 2026-10-08 rewrite then took the "visit reports or
+    // photos" line off this page too (the landing loses its "x but not y" lines; the tour keeps
+    // the detail). What survives here are the bans.
     // Round 1 wrote "The only texts left are about the pets.", which three readers called an
-    // overclaim: there is no messaging, no photo and no visit report in this product, so every
-    // care conversation still happens on her phone. The replacement is narrower on purpose.
-    expect(body).toContain('What they send you now is about the dog.');
+    // overclaim: there is no photo and no visit report in this product, so every care
+    // conversation still happens on her phone.
     expect(body).not.toContain('The only texts left are about the pets.');
     // The owner removed the "more of what's left is about the animal" sentence on 2026-09-04, so
     // its pin goes with it; the ban it protected stays, because gate codes and "running late"
@@ -311,11 +412,10 @@ describe('GET / — landing page', () => {
     // take a repeat request ("every Tuesday and Thursday until the end of November"), expanding it
     // into dated requests she still confirms one by one, and a dog walker needs to read that before
     // signing up. So 'every tuesday' and 'repeating booking' left the list, and the note that says
-    // so is pinned below; the names of a booking-page control that does not exist stay banned.
+    // so was pinned here; the names of a booking-page control that does not exist stay banned.
+    // 2026-10-08: the one-at-a-time note left the landing page for the tour, which pins it.
     for (const unbuilt of ['repeat weekly', 'recurring booking', 'standing booking'])
       expect(body.toLowerCase(), unbuilt).not.toContain(unbuilt);
-    expect(body).toContain('On your booking page a client picks each date for now.');
-    expect(body).toContain('each date still comes to you to confirm');
     const { env } = createTestEnv();
     const tour = await (await app.request('/how-it-works', {}, env)).text();
     expect(tour).toContain('repeat weekly');
@@ -369,6 +469,33 @@ describe('GET / — landing page', () => {
     expect(total, 'total image weight').toBeLessThanOrEqual(TOTAL_BUDGET_KB * 1024);
   });
 
+  it('the recipe the screenshots were taken from is tracked', () => {
+    expect(
+      statSync(join(IMG_DIR, '..', '..', '..', 'docs', 'landing-screenshots.md')).isFile(),
+    ).toBe(true);
+  });
+
+  it('the copy around the screenshots names the stay and month they show', async () => {
+    // The shots show Boarding for Bella, Sat 14 to Tue 17 November 2026: 3 nights, $150. The
+    // hero alt, the hero's request card, the phone example, the step alts and the dashboard mock
+    // all say the same stay, so no line on the page contradicts a picture beside it.
+    const body = await landingBody();
+    expect(body).not.toMatch(/20(28|29)/);
+    expect(body).toContain('a November calendar with a three-night boarding stay selected');
+    expect(body).toContain(
+      '<span class="req-what">Boarding &middot; 3 nights &middot; $150</span>',
+    );
+    expect(body).toContain('Sat 14th to Tue 17th');
+    expect(body).toContain('<span class="mockdash-when">November 2026</span>');
+    expect(body).toContain('Nov 14 &ndash; Nov 17 &middot; 1 pet &middot; $150');
+    expect(body).toMatch(/alt="[^"]*3 nights, \$150\.00[^"]*"/);
+    // Step 01 shows the client's service picker, so its words describe that picture.
+    expect(body).toContain('Your clients choose from them on your booking page.');
+    // The step headings carry no trailing period, like every other h3 on the page.
+    for (const h of [...body.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1]))
+      expect(h, h).not.toMatch(/\.$/);
+  });
+
   it('footer carries no open-source / self-host block, only the created-by line', async () => {
     const body = await landingBody();
     for (const gone of [
@@ -397,15 +524,10 @@ describe('GET / — landing page', () => {
     expect(ways).toContain('<h3>By WhatsApp, on Pro</h3>');
   });
 
-  it('leads Pro with the assistant, keeps her the one who confirms, and keeps card payments', async () => {
+  it('leads Pro with WhatsApp, keeps her the one who confirms, and keeps card payments', async () => {
     const body = await landingBody();
-    const pro = body.slice(body.indexOf('id="pro"'), body.indexOf('id="pricing"'));
-    expect(body.indexOf('id="pro"')).toBeGreaterThan(body.indexOf('id="dashboard"'));
-    expect(pro).toContain('<div class="features features-3">');
-    expect(pro.match(/<div class="feature">/g)?.length).toBe(3);
-    expect(pro).toContain('<h3>Booking by WhatsApp</h3>');
-    expect(pro).toContain('Confirm and Decline buttons');
-    expect(pro).toContain('<h3>Card payments through your own Stripe account</h3>');
+    const pro = body.slice(body.indexOf('id="pro"'), body.indexOf('id="clients"'));
+    expect(body.indexOf('id="pro"')).toBeLessThan(body.indexOf('id="clients"'));
     // The assistant supports the relationship and never replaces the sitter: every request
     // still waits on her, and nothing here may hand her a number or let a message book itself.
     for (const overclaim of [
@@ -421,7 +543,7 @@ describe('GET / — landing page', () => {
       expect(pro.toLowerCase(), overclaim).not.toContain(overclaim);
     // On the Pro card, WhatsApp leads directly after "Everything in Solo", and card payments
     // stay on the list as a feature rather than the headline.
-    const card = body.slice(body.indexOf('<h3>Pro</h3>'), body.indexOf('id="install"'));
+    const card = body.slice(body.indexOf('<h3>Pro</h3>'), body.indexOf('id="faq"'));
     const items = [...card.matchAll(/<li>([^<]*)/g)].map((m) => m[1]);
     expect(items[0]).toBe('Everything in Solo');
     expect(items[1]).toMatch(/^Booking by WhatsApp/);
@@ -434,19 +556,19 @@ describe('GET / — landing page', () => {
     const body = await landingBody();
     // The form posts to /signup (routes/signup-page.ts), which emails the link itself in open
     // mode. "Sign up" is truthful only beside the sentence saying we email a sign-up link, and the
-    // submit button names what it asks for.
+    // submit button names what it asks for. The closing band's heading is an invitation now; its
+    // button still reads "Sign up", and only the hero's names the trial (owner, 2026-10-08).
     expect(body).not.toContain('Ask for an invite');
-    expect(body).toContain('<h2 id="invite-h">Sign up</h2>');
+    expect(body).toContain('<h2 id="invite-h">Try it with your own clients</h2>');
     expect(body).toContain('email you a sign-up link');
     expect(body).not.toContain('added by hand');
   });
 
-  it('says who it is for: one sitter with ten to twenty regular clients', async () => {
+  it('says who it is for: sitters and walkers who run the business themselves', async () => {
     const body = await landingBody();
     const fit = body.slice(body.indexOf('id="fit"'), body.indexOf('id="ways"'));
     expect(body.indexOf('id="fit"')).toBeLessThan(body.indexOf('id="how"'));
-    expect(fit).toContain('ten to twenty regular clients');
-    expect(fit).toContain('on your own');
+    expect(fit).toContain('run the business themselves');
     expect(fit.match(/<div class="feature">/g)?.length).toBe(3);
     // A pricing example must never read as an estimate the product would make.
     expect(fit).toContain('never guessed at');
@@ -457,5 +579,48 @@ describe('GET / — landing page', () => {
     for (const legacy of ['open source', 'open-source', 'free tier', 'free plan', 'free forever'])
       expect(body, legacy).not.toContain(legacy);
     expect(body).not.toContain('bradpaws');
+    // The no-cut comparison names no marketplace: a competitor's fee is theirs to change.
+    expect(body).not.toContain('rover');
+  });
+
+  it('names the AI assistant once, says what it answers with, and that she can switch it off', async () => {
+    const body = await landingBody();
+    const hero = body
+      .slice(body.indexOf('class="hero"'), body.indexOf('id="fit"'))
+      .replace(/\s+/g, ' ');
+    expect(hero).toContain(
+      'a friendly AI assistant answers with your rates and open dates. You confirm every booking with one tap, and you can switch the assistant off any time.',
+    );
+    // First mention only: later ones are "the assistant", and nothing calls it automation.
+    expect(body.match(/friendly AI assistant/g)?.length).toBeLessThanOrEqual(2);
+    expect(body).not.toContain('A friendly assistant answers');
+    expect(body.toLowerCase()).not.toContain('ai automation');
+  });
+
+  it('says what each plan is for, near the hero price and on the price cards', async () => {
+    const body = await landingBody();
+    const hero = body.slice(body.indexOf('class="hero"'), body.indexOf('id="fit"'));
+    expect(hero).toContain(
+      'Solo, $15 a month: your booking link and calendar. Pro, $29 a month: adds booking by WhatsApp, cards and deposits.',
+    );
+    const pricing = body.slice(body.indexOf('id="pricing"'), body.indexOf('id="faq"'));
+    expect(pricing).toContain('<p class="price-tag">Your booking link and calendar</p>');
+    expect(pricing).toContain(
+      '<p class="price-tag">Adds booking by WhatsApp, cards and deposits</p>',
+    );
+    expect(pricing).toContain(
+      '<li>No AI talks to your clients unless you add Pro and switch it on</li>',
+    );
+    expect(pricing).toContain(
+      'Unlike a marketplace app, neither plan takes a cut of your bookings.',
+    );
+  });
+
+  it('offers to set up WhatsApp with her, on the Pro section', async () => {
+    const body = await landingBody();
+    const pro = body.slice(body.indexOf('id="pro"'), body.indexOf('id="clients"'));
+    expect(pro).toContain(
+      'We&rsquo;ll set it up with you: email <a href="mailto:hello@pawservation.com">hello@pawservation.com</a>.',
+    );
   });
 });

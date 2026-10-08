@@ -6,8 +6,10 @@ description: Doctrine for pawservation's worker-served marketing/SEO pages (/, /
 # Marketing pages, SEO and agent-discoverability
 
 Six worker-rendered marketing pages (`/`, `/how-it-works`, `/about`, `/contact`, `/privacy`,
-`/terms`) plus the two sign-up pages, `/signup` and `/signup/sent`. All are rendered by
-`server/index.ts` (the sign-up pages by `server/routes/signup-page.ts`), served under `LOCKED_CSP` +
+`/terms`), the three setup guides (`/getting-started`, `/getting-started/whatsapp`,
+`/getting-started/card-payments`, rendered by `server/lib/setup-guides.ts`) plus the two sign-up
+pages, `/signup` and `/signup/sent`. The rest are rendered by
+`server/index.ts` (the sign-up pages by `server/routes/signup-page.ts`). All are served under `LOCKED_CSP` +
 `X-Frame-Options: DENY`, and
 pinned by `server/__tests__/seo.test.ts` and `landing.test.ts`.
 
@@ -26,13 +28,19 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
 - **`rel="canonical"` is pinned to `BRAND_ORIGIN`, never the request origin.**
 - **No fabricated headcount, funding, founding date or street address anywhere.** Nothing unbuilt
   may be described as available either, with one standing exception the owner made on 2026-09-04:
-  the Pro tier is presented as sold. No page may offer a checkout, a card form or a trial mechanic,
-  because this repo contains no billing code.
+  the Pro tier is presented as sold. No page may offer a checkout, a card form or a trial mechanic:
+  this repo's billing code only records the plan premium reports (`POST
+/api/:slug/admin/billing/events`) and sends a signed-in sitter from the dashboard's plan panel to
+  premium's Stripe checkout, so a marketing page has no checkout to offer.
   Booking by WhatsApp is sold as part of Pro on the owner's instruction (2026-10-05), and the copy
   claims only what it does: clients message the sitter's own number to book, get a quote,
   reschedule or cancel; she gets each new request as an alert with Confirm and Decline; the client
   hears the answer. The calls to action read "Sign up" on the same instruction, and stay truthful
   only beside the sentence that we email a sign-up link, which `/signup` does (see the next rule).
+  The one exception (owner decision 2026-10-08) is the landing hero's primary button, which names
+  the trial: "Start your 30-day free trial", the figure interpolated from `PRICING.trialDays`, still a
+  plain link to `/signup`. "Free" appears only inside "free trial"; "free tier", "free plan" and
+  "free forever" stay banned, and so does invite wording ("ask for an invite", "waitlist").
 - **`/signup` is the ONE page with a third-party script**: Cloudflare Turnstile's widget, which
   needs `script-src` and `frame-src` for `https://challenges.cloudflare.com`. The header middleware
   adds both for that exact path and nowhere else; every "Sign up" on the marketing pages is a
@@ -41,7 +49,7 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
 - **The other third-party script is the Cloudflare Web Analytics beacon (owner decision
   2026-10-05).** When `CF_WEB_ANALYTICS_TOKEN` is set (32 hex), `marketingHtml`
   (`server/lib/web-analytics.ts`) appends the cookieless beacon before `</body>` on the six pages
-  above, `/getting-started`, and the GETs of `/signup` and `/signup/sent`, and sets the `webAnalytics` context flag
+  above, `/getting-started` and its two Pro guides, and the GETs of `/signup` and `/signup/sent`, and sets the `webAnalytics` context flag
   the header middleware reads to add `https://static.cloudflareinsights.com` to the ONE `script-src`
   list (beside Turnstile's on `/signup`) and `https://cloudflareinsights.com` to the ONE
   `connect-src` list (beside the premium origin). Tag and allowance are one decision, so neither
@@ -49,7 +57,7 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   `/demo`, `/setup` or any POST response; `web-analytics.test.ts` pins those as unchanged. A page
   added here must be served through `marketingHtml` to be counted, and the privacy page's "What we
   measure" section lists the pages by name, so it changes in the same commit.
-- **A sign-up carries where it came from.** `GET /` and `GET /getting-started` read `utm_source`,
+- **A sign-up carries where it came from.** `GET /` and the three setup guides read `utm_source`,
   `utm_campaign` and the Referer's ORIGIN (`server/lib/attribution.ts`) and append them to their
   `href="/signup"` links (`withSignupAttribution` in `server/index.ts`, the referrer as
   `ref_origin`); `GET /signup` reads the same from its query, or from its own
@@ -58,18 +66,22 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   are dropped, never a 400; never logged, never stored. The other pages' Sign up links do not carry
   them.
 
-## `/getting-started`, the sitter's setup guide
+## `/getting-started`, the sitter's setup guides
 
-A seventh `pageHead` page, on the `/contact` skeleton (bare `.nav-right`, `.legal` prose, one `h2`
-per `.feature`), so it adds no CSS. It walks a new sitter from the sign-up email to booking by
-WhatsApp using the dashboard's own labels, and `getting-started.test.ts` pins the labels she will
-look for, so a dashboard rename fails a test rather than stranding her. Its Pro sections name a
-dashboard place, never a path on the paid origin: the cross-repo contract budget is full. It is in
-the sitemap, `run_worker_first`, the product `llms.txt` and the shared footer ("Setup guide").
+Three pages in `server/lib/setup-guides.ts`: the hub at `/getting-started` (which is also the
+booking-link guide) and the Pro guides at `/getting-started/whatsapp` and
+`/getting-started/card-payments`. They sit on the `/contact` skeleton (bare `.nav-right`, `.legal`
+prose, one `h2` per `.feature`), written as numbered one-sentence steps with the dashboard's own
+labels; `getting-started.test.ts` and `setup-guides.test.ts` pin the labels she will look for, so a
+dashboard rename fails a test rather than stranding her. The Pro guides name a dashboard place, never
+a path on the paid origin: the cross-repo contract budget is full. Each is in the sitemap,
+`run_worker_first`, the product `llms.txt`, the shared footer and the privacy page's list of measured
+pages, and carries sign-up attribution.
 
 ## `pageHead` and the canonical
 
-All six pages build their head through `pageHead(path, title, description)` in `server/index.ts`,
+All nine pages (the six above and the three setup guides) build their head through `pageHead(path, title, description)` in
+`server/lib/page-chrome.ts` (beside `pageFooter()` and `STRIPE_LINK`),
 which emits an **absolute** `rel="canonical"` pinned to `BRAND_ORIGIN` (`server/lib/email.ts`,
 exported for this — **one host constant, never two**) alongside the description and Open Graph tags.
 
@@ -156,8 +168,7 @@ render-free-read reason.
 ## Prices live in one constant
 
 `server/lib/plan-pricing.ts` holds `soloMonthly` (15), `proMonthly` (29), `proAnnual` (290) and
-`trialDays` (30). Solo is $15 per sitter per month with a 30-day free trial; Pro is $29 per sitter
-per month, or $290 per year. Every figure on the landing page (hero chip, pricing heading, both
+`trialDays` (30). Solo is $15 a month with a 30-day free trial; Pro is $29 a month, or $290 per year. Every figure on the landing page (hero chip, pricing heading, both
 cards), on `/how-it-works`, in the product `llms.txt` Status section and in the homepage
 `SoftwareApplication` offers is interpolated from it. Never hardcode one at a call site: four
 surfaces state these numbers, and any two of them disagreeing is a pricing lie. `/about` was a
@@ -166,9 +177,9 @@ no price at all. The one surface that cannot interpolate anything is `public/img
 bakes the price into the image, so a change to `soloMonthly` means regenerating that card by the
 recipe in `docs/og-card.md`.
 
-The invite form is the only call to action either card carries. There is no billing code in this
-repo, so the copy says a trial exists and says nothing about how it is entered or ended, and it
-claims nothing about whether a card is required.
+Each price card's one call to action is a plain "Sign up" link to `/signup`. There is no billing
+code in this repo, so the copy says a trial exists and how it starts (an email, no card, which is
+all `/signup` asks for) and says nothing about how it is ended.
 
 ## `/about` and `/contact` are the trust-anchor pages
 
@@ -218,7 +229,7 @@ was instead of being it.
 The page is also not a call to action. Its founder story used to close by asking sitters to try
 the product "while it's still early", and the owner cut that on 2026-09-09 for the same reason he
 narrowed the page: `/about` states why the thing exists, and recruiting is the landing page's
-invite form, already the only call to action this site carries. The demo-and-tour line that now
+job, through its links to `/signup`. The demo-and-tour line that now
 ends the page stays, because it is wayfinding for a reader who has finished it. That deletion also
 took the page's only statements that this is a small independent product with no sales team and
 that questions reach a person; `/contact` makes both in its own words ("There is no support desk
@@ -273,15 +284,16 @@ and most are a single declaration, which is the size of thing a tidy-up deletes.
   of different heights and their tops legitimately differ on one row). **`.nav-links-5` is the
   tuning for a five-link row** — 20px gaps and the plain sign-in link dropped below 890px — and BOTH
   five-link headers (`/` and `/how-it-works`) carry it; `/how-it-works` wrapped from 780px to 829px
-  until it did. A sixth link in either row needs new measurements, not a sixth `<a>`. The one
-  remaining wrap is the landing's own at 320-350px, which the CSS documents as deliberate.
+  until it did. A sixth link in either row needs new measurements, not a sixth `<a>`. Measured on
+  2026-10-08, every page's header is one row at 320, 375, 768 and 1280px in both color schemes;
+  the wrap the CSS documents below 560px is the safety valve, not a layout anyone sees today.
 - **Heading levels never skip.** `.feature` is a landing-page CARD, where `h3` is right because a
   `.section-head` `h2` sits above it. The four prose pages carry no `.section-head`, so the same
   block there must be `h2` or the page reads h1 straight to h3. PAGE_STYLE lists `.feature h2`
   beside `.feature h3` so the LEVEL is corrected without changing the LOOK.
-- **The focus ring is `--green`, which disappears on the one dark ground.** `.cta-panel
-:focus-visible` overrides the COLOR alone to `#fff` (1.83:1 becomes ~14:1). That band holds the
-  invite form's submit button, so this is the page's primary action.
+- **The focus ring is the link color, which disappears on the one dark ground.** `.cta-panel
+:focus-visible` overrides the COLOR alone to `var(--band-ink)`. That band holds the final
+  "Sign up" button, so this is the page's last call to action.
 - **Prose gets a reading measure.** `.legal p`/`.legal li` are capped at **52ch**, the figure
   `.section-head p` already uses, roughly 72 characters a line. Uncapped they ran the full 1072px
   `.wrap` at about 130 characters, under a hero whose own `h1` is 15ch and whose `.sub` is 48ch — a
@@ -302,6 +314,19 @@ and most are a single declaration, which is the size of thing a tidy-up deletes.
   no other page has, so widening any of them to `.hero h1`, `.feature h2` or `.legal` would
   silently re-scale the landing cards and the three other prose pages. `seo.test.ts` pins both
   halves together — the rules exist, AND no other page carries anything they can match.
+- **Every color is a role token, and dark mode is the same tokens redefined once.** `PAGE_STYLE`
+  has exactly two `:root` blocks, the second under `@media (prefers-color-scheme: dark)`, and no
+  color literal anywhere else, in the CSS or in any page's `style=` attribute (`/signup` included).
+  `page-style.test.ts` pins all three and computes 4.5:1 for every text pair in `PAIRS` in BOTH
+  schemes, so a new color that carries text is a token in both blocks and a line in `PAIRS`.
+- **Headings use one display face, self-hosted under a 40KB budget.** Fraunces SemiBold, latin
+  subset, at `/fonts/fraunces-600.woff2` (18KB) with its license beside it as
+  `/fonts/OFL-fraunces.txt`, through the `--display` token; body text stays the system stack.
+  Same origin, so `LOCKED_CSP` needs nothing new. `page-style.test.ts` fails a file over 40KB.
+- **Every in-page target clears the sticky header.** `.nav` is `position: sticky`, so a jump to an
+  id lands that element under it unless it has a scroll margin. `[id] { scroll-margin-top: 80px; }`
+  covers every target, not only `<section>`s: the ways card's `#faq-website` link opens on a
+  `<details>`, and with a section-only rule its question sat hidden under the nav.
 - Not a rule, but the same class of thing: `.btn` sets `font-family: inherit; line-height: inherit`
   because one `.btn` on this site is a `<button>` and the rest are `<a>`s, and a `<button>` inherits
   neither.
@@ -317,10 +342,10 @@ Matching the named entity alone was blind to 36 raw dashes — 24 of them served
 
 Two purpose-built 1200x630 PNGs, **split by AUDIENCE, and that split is the point**:
 
-| File                        | Declared by                              | Reader                                    |
-| --------------------------- | ---------------------------------------- | ----------------------------------------- |
-| `public/img/og-card.png`    | `pageHead` (all six pages) + `demo.html` | a prospective **sitter**, being recruited |
-| `public/img/og-booking.png` | `embedCardTags` on `/embed/:slug`        | a **pet owner** texted her sitter's link  |
+| File                        | Declared by                               | Reader                                    |
+| --------------------------- | ----------------------------------------- | ----------------------------------------- |
+| `public/img/og-card.png`    | `pageHead` (all nine pages) + `demo.html` | a prospective **sitter**, being recruited |
+| `public/img/og-booking.png` | `embedCardTags` on `/embed/:slug`         | a **pet owner** texted her sitter's link  |
 
 The most-shared link this product has is a sitter texting a client her own booking page, and that
 reader is booking her dog in, not choosing software. **The image and the card type move together or

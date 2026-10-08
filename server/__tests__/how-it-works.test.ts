@@ -110,8 +110,16 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).toContain('id="pro"');
     // The assistant answers routine questions and never books: a request it takes still waits for
     // her tap, the same rule "Nothing books itself." states for every other path.
-    expect(body).toContain('a friendly assistant');
+    expect(body).toContain(
+      '<h2 id="pro-h">On Pro, a friendly AI assistant takes the routine questions</h2>',
+    );
+    expect(body).toContain('You can switch it off any time.');
     expect(body).toContain('WhatsApp alert with Confirm and Decline buttons');
+    // One noun per thing across public pages: the landing calls it the back-office helper, and
+    // "assistant" is the client-facing one.
+    expect(body).toContain('<h3>A helper for your back office</h3>');
+    expect(body).not.toContain('An assistant for your back office');
+    expect(body).not.toContain('back-office assistant');
     // Card payments are a card in that section, not the headline. The Stripe arrangement is still
     // stated ONCE (the Services aside, pinned above), so this card names the fee terms only.
     expect(body).toContain('Stripe&rsquo;s published rate and no fee to Pawservation');
@@ -131,7 +139,7 @@ describe('GET /how-it-works — the tour page', () => {
     // sendBookingStatusEmail fires on confirm/decline/cancel from the admin status route
     // (server/routes/admin.ts), so the sitter does not have to send the "you're booked" message.
     expect(body).toContain('your client is emailed the moment you do');
-    // There is no billing code in this repo, and on Solo the money never touches it: the sitter
+    // This repo holds no checkout of any kind, and on Solo the money never touches it: the sitter
     // is paid directly. The page states that as the positive claim a sitter cares about, so the
     // pin that used to hold the words "never processes" is now the claim plus a ban on the
     // opposite, which is the half that could ever mislead.
@@ -289,8 +297,15 @@ describe('GET /how-it-works — the tour page', () => {
 
   it('never claims an unbuilt capability as available', async () => {
     const body = await howItWorksBody();
-    // Forbidden nouns: nothing on this page may promise invoicing, AI, or SMS features.
-    for (const banned of [/\bAI\b/, /invoice/i, /statement/i, /\bSMS\b/, /text message/i]) {
+    // Forbidden nouns: nothing on this page may promise invoicing, AI, or SMS features. The one
+    // AI that exists is named as what it is, "AI assistant" (owner, 2026-10-08); any other AI is banned.
+    for (const banned of [
+      /\bAI\b(?! assistant)/,
+      /invoice/i,
+      /statement/i,
+      /\bSMS\b/,
+      /text message/i,
+    ]) {
       expect(body, String(banned)).not.toMatch(banned);
     }
     // …nor a refusal reason the API does not give, nor a limit marketing stopped quoting.
@@ -376,10 +391,10 @@ describe('GET /how-it-works — the tour page', () => {
     expect(body).toContain('up to 60 dates at a time');
   });
 
-  it('states the one-sitter limit on Solo, and never claims partial-day time off', async () => {
+  it('states one sitter per account, and never claims partial-day time off', async () => {
     const body = await howItWorksBody();
-    // Solo is one sitter per account, pinned from landing.test.ts too.
-    expect(body).toContain('Solo runs one sitter per account');
+    // Every account is one sitter, on Solo and Pro alike; pinned from landing.test.ts too.
+    expect(body).toContain('Pawservation is made for one person running her own book.');
     // owner removed the whole-days item from the tour, 2026-09-04
     expect(body).not.toMatch(/block (an|a single) hour|hourly time off|part of a day/i);
   });
@@ -485,12 +500,12 @@ describe('GET /how-it-works — the tour page', () => {
   it('states the plan prices from PRICING, and offers no checkout for them', async () => {
     const body = await howItWorksBody();
     // Five surfaces state these numbers and any two disagreeing is a pricing lie, so the page
-    // interpolates rather than hardcodes. There is no billing code in this repo, so the trial is
-    // a fact the page states and never a flow it offers.
+    // interpolates rather than hardcodes. The checkout lives in premium, reached from the
+    // dashboard, so the trial is a fact the page states and never a flow it offers.
     expect(body).toContain(PRICE_LINE);
     expect(body).toContain(TRIAL_LINE);
     expect(body).not.toMatch(
-      /upgrade now|buy now|subscribe|enter your card|start (your |a )?free trial|no credit card|no card required/i,
+      /upgrade now|buy now|subscribe|enter your card|ask for an invite|request an invite|waitlist|wait list|no credit card|no card required/i,
     );
   });
 
@@ -572,7 +587,7 @@ describe('the landing page claims only what ships', () => {
     return res.text();
   }
 
-  it('is script-free under the locked CSP, with the embed snippet escaped', async () => {
+  it('is script-free under the locked CSP', async () => {
     const { env } = createTestEnv();
     const res = await app.request('/', {}, env);
     const body = await res.text();
@@ -582,7 +597,6 @@ describe('the landing page claims only what ships', () => {
     // EXECUTABLE script, so pin that: every script tag on the page must be the data block, and the
     // assertion fails the moment a real one appears.
     expect(body.match(/<script[^>]*>/g)).toEqual(['<script type="application/ld+json">']);
-    expect(body).toContain('&lt;script');
     expect(res.headers.get('X-Frame-Options')).toBe('DENY');
     expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
   });
@@ -696,13 +710,13 @@ describe('the landing page claims only what ships', () => {
     expect(body).not.toContain('Available now');
     expect(body).toContain('<h3>Solo</h3>');
     expect(body).toContain('<h3>Pro</h3>');
-    // There is no billing code in this repo. The invite form is the only call to action either
-    // card offers, so nothing here may read as a purchase the visitor can complete. The trial is
-    // stated as a fact and never offered as a flow, for the same reason: "start your free trial"
-    // and "no credit card required" are both promises about a checkout that does not exist, and
-    // the second one describes a card step nothing in this repo could ask for or skip.
+    // No checkout is reachable from this page. Sign-up is the only call to action either card
+    // offers, so nothing here may read as a purchase the visitor can complete: "no credit card
+    // required" describes a card step nothing in this repo could ask for or skip. The owner let the
+    // hero button name the trial on 2026-10-08 ("Start your 30-day free trial" leads to the same
+    // sign-up), so that phrase left this list and the retired invite wording joined it.
     expect(body).not.toMatch(
-      /upgrade now|buy now|subscribe|enter your card|start (your |a )?free trial|no credit card|no card required/i,
+      /upgrade now|buy now|subscribe|enter your card|ask for an invite|request an invite|waitlist|wait list|no credit card|no card required/i,
     );
   });
 
@@ -724,17 +738,17 @@ describe('the landing page claims only what ships', () => {
 
   it('keeps the MCP/assistant-booking bullet on the Pro card', async () => {
     const body = await landingBody();
-    expect(body).toMatch(/connect an ai assistant.*check availability and book/i);
+    expect(body).toMatch(/clients who use an AI assistant can connect it and book with you/i);
     // Owner repriced on 2026-09-04: the bullet's card is a product now, and the only thing the
     // page still may not do is offer a checkout it has no code for.
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);
   });
 
-  it('keeps the back-office assistant bullet on the Pro card', async () => {
+  it('keeps the back-office helper bullet on the Pro card', async () => {
     const body = await landingBody();
     // The "which pet combinations have no price" clause went with the September 2026 landing
     // trim: it is codebase vocabulary on a pricing card. The bullet itself is what stays pinned.
-    expect(body).toMatch(/back-office assistant.*who owes you.*your week/i);
+    expect(body).toMatch(/back-office helper.*who owes you.*your week/i);
     // Owner repriced on 2026-09-04: same rule as the sibling test above, no checkout on the page.
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);
   });

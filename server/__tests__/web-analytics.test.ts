@@ -23,6 +23,8 @@ const MARKETING_PATHS = [
   '/',
   '/how-it-works',
   '/getting-started',
+  '/getting-started/whatsapp',
+  '/getting-started/card-payments',
   '/about',
   '/contact',
   '/privacy',

@@ -60,7 +60,7 @@ describe('GET /privacy', () => {
     expect(main.replace(/#invite-h/g, '')).not.toMatch(/invite/i);
     expect(body).toContain('<h2>What we measure</h2>');
     expect(body).toContain('Cloudflare Web Analytics');
-    expect(body).toContain('the homepage, the tour, Getting started, About, Contact');
+    expect(body).toContain('the homepage, the tour, the setup guides, About, Contact');
     expect(body).toMatch(/sets no cookies/i);
     expect(body).toMatch(/does not fingerprint you/i);
     expect(body).toMatch(
@@ -73,7 +73,7 @@ describe('GET /privacy', () => {
   it('discloses the AI transcripts: what is kept, what is removed, retention, who reads them, and flagging', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/privacy', {}, env)).text();
-    expect(body).toContain('Last updated: October 6, 2026');
+    expect(body).toContain('Last updated: October 8, 2026');
     expect(body).toContain('<h2>Conversations with Pro&rsquo;s AI features</h2>');
     expect(body).toMatch(
       /we keep a transcript of the messages they send and the assistant&rsquo;s replies/,
@@ -89,7 +89,15 @@ describe('GET /privacy', () => {
     expect(body).toMatch(
       /Texting STOP on WhatsApp stops the messages; it doesn&rsquo;t delete the transcript/,
     );
-    expect(body).toMatch(/Sitters don&rsquo;t see this archive/);
+    expect(body).not.toMatch(/Sitters don&rsquo;t see this archive/);
+    expect(body).toMatch(
+      /A sitter on Pro can also read the conversations her own clients had with the friendly AI assistant on WhatsApp, from the day booking by message began \(October 6, 2026\)/,
+    );
+    expect(body).toMatch(
+      /can&rsquo;t edit or delete what was said, and never sees verification codes or payment links/,
+    );
+    expect(body).toMatch(/can&rsquo;t see what you ask your own AI assistant/);
+    expect(body).toContain('Your sitter can read what you and the assistant said to each other.');
     expect(body).toMatch(/checked automatically for profanity/);
     expect(body).toMatch(/never used to make any decision about the person/);
   });

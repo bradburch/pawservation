@@ -4,7 +4,7 @@
  * without an import cycle (index.ts
  * mounts those routes, so the routes module cannot import back from index.ts).
  */
-export const PAGE_STYLE = /* css */ `
+const RAW = /* css */ `
       /* Brand face for the nav wordmark only: a 1.3KB self-hosted subset ("Pawservation"
          glyphs), so it can never slow the page or leak a request off-origin. */
       @font-face {
@@ -13,24 +13,92 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 400;
         font-display: swap;
       }
+      /* Headings only: Fraunces SemiBold, the latin subset from @fontsource/fraunces (SIL Open Font
+         License, beside it as /fonts/OFL-fraunces.txt). Same origin, so the CSP needs nothing new. */
+      @font-face {
+        font-family: 'Fraunces';
+        src: url('/fonts/fraunces-600.woff2') format('woff2');
+        font-weight: 600;
+        font-display: swap;
+      }
+      /* Every color on these pages is a role token, defined here and redefined once for dark mode
+         directly below; no rule outside the two blocks names a color. Each text pair passes 4.5:1 in
+         both schemes, and server/__tests__/page-style.test.ts computes the ratios. The greens come
+         from the widget's own palette (app/embed/widget.css), so the screenshots and the page read
+         as one product. */
       :root {
-        color-scheme: light;
-        /* Palette derived from the widget's own tokens (app/embed/widget.css) so the
-           screenshots and the page read as one product. */
-        --bg: #fcfcfa;
-        --panel: #f1f5ee;
-        --ink: #18271d;
-        --body-c: #415044;
-        --soft: #5a6a5e;
-        --line: #e3e7e0;
-        --green: #2e6440;
-        --deep: #1d3826;
-        --deepest: #142919;
+        color-scheme: light dark;
+        --bg: #fbfaf6;
+        --panel: #f0f4ec;
         --card: #ffffff;
+        --ink: #17261c;
+        --body-c: #3e4c41;
+        --soft: #56665a;
+        --line: #e1e6dc;
+        --link: #2a5c3b;
+        --btn-bg: #2e6440;
+        --btn-ink: #ffffff;
+        --band-bg: #1d3826;
+        --band-ink: #f3f7f2;
+        --band-soft: #c4d2c6;
+        --band-mute: #8fa896;
+        --chip-bg: #fbecc8;
+        --chip-ink: #4a3a0c;
+        --bubble-in: #ffffff;
+        --bubble-out: #e2f1e5;
+        --phone: #17261c;
+        --pend-bg: #f8f1de;
+        --pend-ink: #7a5d14;
+        --ok-bg: #e7f2e8;
+        --ok-ink: #1f5c3f;
+        --code-bg: #142919;
+        --code-ink: #e8efe8;
+        --code-tag: #93c9a4;
+        --code-attr: #d8c98a;
+        --nav-bg: #fbfaf6e0;
+        --shadow: #17261c1f;
+        --field-bg: #2a4332;
+        --field-line: #f3f7f22e;
+        --display: 'Fraunces', Georgia, 'Times New Roman', serif;
         --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
           Helvetica, Arial, sans-serif;
         --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
           "Liberation Mono", monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1912;
+          --panel: #142118;
+          --card: #192a1e;
+          --ink: #eef3ee;
+          --body-c: #c8d3ca;
+          --soft: #a3b3a6;
+          --line: #2a3c2f;
+          --link: #8fd0a8;
+          --btn-bg: #8fd0a8;
+          --btn-ink: #0f1912;
+          --band-bg: #1d3826;
+          --band-ink: #f3f7f2;
+          --band-soft: #c4d2c6;
+          --band-mute: #8fa896;
+          --chip-bg: #3a3118;
+          --chip-ink: #f6e4b4;
+          --bubble-in: #223528;
+          --bubble-out: #28452f;
+          --phone: #050a07;
+          --pend-bg: #3a3118;
+          --pend-ink: #f6e4b4;
+          --ok-bg: #1f3a28;
+          --ok-ink: #bfe5cb;
+          --code-bg: #050a07;
+          --code-ink: #e8efe8;
+          --code-tag: #93c9a4;
+          --code-attr: #d8c98a;
+          --nav-bg: #0f1912e0;
+          --shadow: #0000008c;
+          --field-bg: #2a4332;
+          --field-line: #f3f7f22e;
+        }
       }
       * { box-sizing: border-box; }
       html {
@@ -45,7 +113,18 @@ export const PAGE_STYLE = /* css */ `
         line-height: 1.6;
         font-size: 16px;
       }
+      @media (min-width: 640px) { body { font-size: 17px; } }
       h1, h2, h3 { color: var(--ink); margin: 0; }
+      /* The display face is for the page's own headings. Each heading rule below sets its size and
+         keeps this face and weight; .feature headings opt back out to the sans. */
+      h1, h2 {
+        font-family: var(--display);
+        font-weight: 600;
+        text-wrap: balance;
+      }
+      h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); }
+      h2 { font-size: clamp(1.6rem, 3.2vw, 2.3rem); }
+      h3 { font-size: 1.05rem; font-weight: 600; }
       .wrap {
         width: 100%;
         max-width: 1120px;
@@ -58,7 +137,7 @@ export const PAGE_STYLE = /* css */ `
         position: sticky;
         top: 0;
         z-index: 10;
-        background: rgba(252, 252, 250, 0.88);
+        background: var(--nav-bg);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         border-bottom: 1px solid var(--line);
@@ -84,7 +163,7 @@ export const PAGE_STYLE = /* css */ `
         font-size: 1.3rem;
         letter-spacing: 0.02em;
       }
-      .logo svg { display: block; color: var(--green); }
+      .logo svg { display: block; color: var(--link); }
       .nav-links {
         display: none;
         gap: 24px;
@@ -161,6 +240,7 @@ export const PAGE_STYLE = /* css */ `
          this row is the widest thing on the page, so a no-wrap header pushed the DOCUMENT wider
          than the viewport rather than pushing itself. That was the 320px to 365px scroll. */
       @media (max-width: 560px) {
+        .wrap { padding: 0 16px; }
         .nav-inner { gap: 10px; }
         .nav-right { gap: 10px; }
         .nav-right .btn-sm { padding: 8px 12px; font-size: 0.86rem; }
@@ -189,10 +269,12 @@ export const PAGE_STYLE = /* css */ `
         line-height: inherit;
       }
       .btn-primary {
-        background: var(--green);
-        color: #fff;
+        background: var(--btn-bg);
+        color: var(--btn-ink);
       }
-      .btn-primary:hover { background: var(--deep); }
+      /* Toward the ink: darker on the light page, lighter on the dark one, so the hover always
+         moves away from the button text rather than toward it. */
+      .btn-primary:hover { background: color-mix(in srgb, var(--btn-bg) 85%, var(--ink)); }
       .btn-ghost {
         color: var(--ink);
         border: 1px solid var(--line);
@@ -201,10 +283,10 @@ export const PAGE_STYLE = /* css */ `
       .btn-ghost:hover { border-color: var(--soft); }
       .btn-sm { padding: 8px 16px; font-size: 0.88rem; }
       .btn-inverse {
-        background: #fff;
-        color: var(--deep);
+        background: var(--band-ink);
+        color: var(--band-bg);
       }
-      .btn-inverse:hover { background: var(--panel); }
+      .btn-inverse:hover { background: var(--band-soft); }
 
       /* ── Hero ───────────────────────────────────────────────────── */
       .hero { padding: 72px 0 88px; }
@@ -231,16 +313,14 @@ export const PAGE_STYLE = /* css */ `
         background: var(--card);
         font-size: 0.78rem;
         font-weight: 600;
-        color: var(--green);
+        color: var(--link);
         letter-spacing: 0.01em;
       }
       .hero h1 {
-        font-size: clamp(2.3rem, 5vw, 3.35rem);
-        font-weight: 800;
-        line-height: 1.06;
-        letter-spacing: -0.032em;
+        line-height: 1.08;
+        letter-spacing: -0.015em;
         margin: 0 0 20px;
-        max-width: 15ch;
+        max-width: 17ch;
       }
       /* The other heroes cap their h1 at 15ch because a hero-visual or a CTA row sits beside or
          under it and the short measure is what leaves room for it. /about's hero has no second
@@ -250,10 +330,7 @@ export const PAGE_STYLE = /* css */ `
          those two lines evenly instead of leaving a short tail; browsers without it wrap as
          before. Scoped through .hero-flush, which only /about carries, and placed BELOW the rule
          it overrides: the two selectors have equal specificity, so source order is what decides. */
-      .hero-flush h1 {
-        max-width: none;
-        text-wrap: balance;
-      }
+      .hero-flush h1 { max-width: none; }
       .hero .sub {
         margin: 0 0 30px;
         max-width: 48ch;
@@ -266,6 +343,7 @@ export const PAGE_STYLE = /* css */ `
         gap: 12px;
         margin-bottom: 18px;
       }
+      @media (max-width:560px){.hero .cta-row .btn{flex:1 1 100%;text-align:center}}
       .note {
         margin: 0;
         font-size: 0.84rem;
@@ -275,15 +353,18 @@ export const PAGE_STYLE = /* css */ `
       /* Also the four prose pages' body links. Nothing had ever styled a link inside running
          copy, because until /about and /contact existed every link on this site sat in a .note, a
          button, the nav or the footer, all of which are styled. So ten links across /about,
-         /contact, /privacy and /terms rendered in the browser default #0000EE, on the pages a
+         /contact, /privacy and /terms rendered in the browser default link blue, on the pages a
          reader opens to judge whether this is a real business. Same declarations, not a second
          set, so the two can never drift into two shades of underline. */
       .note a,
       .legal p a,
-      .legal li a {
+      .legal li a,
+      .section-head p a,
+      .feature p a,
+      .faq-a a {
         color: var(--ink);
         text-decoration: underline;
-        text-decoration-color: var(--green);
+        text-decoration-color: var(--link);
         text-underline-offset: 2px;
       }
 
@@ -293,7 +374,7 @@ export const PAGE_STYLE = /* css */ `
       .visual-panel {
         position: relative;
         border-radius: 16px;
-        background: radial-gradient(130% 120% at 20% 0%, #e7efe3 0%, var(--panel) 60%);
+        background: radial-gradient(130% 120% at 20% 0%, var(--line) 0%, var(--panel) 60%);
         border: 1px solid var(--line);
         padding: clamp(20px, 4vw, 36px) clamp(20px, 4vw, 36px) 0;
         overflow: hidden;
@@ -307,15 +388,15 @@ export const PAGE_STYLE = /* css */ `
         border-radius: 12px 12px 0 0;
         border: 1px solid var(--line);
         border-bottom: 0;
-        background: #fff;
-        box-shadow: 0 24px 60px -32px rgba(24, 39, 29, 0.45);
+        background: var(--card);
+        box-shadow: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
       }
       .screen img { display: block; width: 100%; height: auto; }
       .screen-fade {
         position: absolute;
         inset: auto 0 0 0;
         height: 90px;
-        background: linear-gradient(to bottom, rgba(241, 245, 238, 0), var(--panel));
+        background: linear-gradient(to bottom, transparent, var(--panel));
         pointer-events: none;
       }
       .req-card {
@@ -323,28 +404,32 @@ export const PAGE_STYLE = /* css */ `
         right: clamp(6px, 2vw, 22px);
         bottom: 26px;
         width: 216px;
-        background: #fff;
+        background: var(--card);
         border: 1px solid var(--line);
         border-radius: 10px;
         padding: 12px 14px;
-        box-shadow: 0 16px 40px -20px rgba(24, 39, 29, 0.5);
+        box-shadow: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
         font-size: 0.78rem;
         line-height: 1.45;
       }
-      .req-card .req-label {
+      .req-card .req-label,
+      .alert-card .req-label {
         font-weight: 700;
         font-size: 0.68rem;
         text-transform: uppercase;
         letter-spacing: 0.07em;
-        color: var(--green);
+        color: var(--link);
       }
-      .req-card .req-what { color: var(--ink); font-weight: 600; }
-      .req-card .req-btns {
+      .req-card .req-what,
+      .alert-card .req-what { color: var(--ink); font-weight: 600; }
+      .req-card .req-btns,
+      .alert-card .req-btns {
         display: flex;
         gap: 6px;
         margin-top: 8px;
       }
-      .req-card .req-btns span {
+      .req-card .req-btns span,
+      .alert-card .req-btns span {
         flex: 1;
         text-align: center;
         padding: 5px 0;
@@ -352,15 +437,15 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 600;
         font-size: 0.74rem;
       }
-      .req-yes { background: var(--green); color: #fff; }
+      .req-yes { background: var(--btn-bg); color: var(--btn-ink); }
       .req-no { border: 1px solid var(--line); color: var(--body-c); }
       @media (min-width: 880px) {
         .hero-grid { grid-template-columns: 1.05fr 0.95fr; }
       }
 
       /* ── Section scaffolding ────────────────────────────────────── */
-      section { scroll-margin-top: 80px; }
-      .section { padding: 88px 0; }
+      [id] { scroll-margin-top: 80px; }
+      .section { padding-block: clamp(56px, 8vw, 104px); }
       .section-head { max-width: 60ch; margin-bottom: 48px; }
       .label {
         display: block;
@@ -369,12 +454,10 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.09em;
-        color: var(--green);
+        color: var(--link);
       }
       .section h2 {
-        font-size: clamp(1.65rem, 3.4vw, 2.15rem);
-        font-weight: 750;
-        letter-spacing: -0.025em;
+        letter-spacing: -0.01em;
         line-height: 1.15;
         margin: 0 0 12px;
       }
@@ -401,7 +484,7 @@ export const PAGE_STYLE = /* css */ `
         flex-direction: column;
         background: var(--card);
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 14px;
         overflow: hidden;
       }
       .step-card .frame {
@@ -422,20 +505,18 @@ export const PAGE_STYLE = /* css */ `
         height: auto;
         border-radius: 6px;
         border: 1px solid var(--line);
-        background: #fff;
-        box-shadow: 0 10px 24px -18px rgba(24, 39, 29, 0.5);
+        background: var(--card);
+        box-shadow: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
       }
       .step-card .step-body { padding: 20px 22px 24px; }
       .step-no {
         font-family: var(--mono);
         font-size: 0.74rem;
         font-weight: 700;
-        color: var(--green);
+        color: var(--link);
       }
       .step-card h3 {
         margin: 6px 0 8px;
-        font-size: 1.06rem;
-        font-weight: 700;
         letter-spacing: -0.01em;
       }
       .step-card p { margin: 0; font-size: 0.92rem; color: var(--body-c); }
@@ -447,8 +528,8 @@ export const PAGE_STYLE = /* css */ `
       .mockdash {
         background: var(--card);
         border: 1px solid var(--line);
-        border-radius: 12px;
-        box-shadow: 0 20px 50px -30px rgba(24, 39, 29, 0.5);
+        border-radius: 14px;
+        box-shadow: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
         margin-bottom: 48px;
         overflow: hidden;
       }
@@ -470,7 +551,7 @@ export const PAGE_STYLE = /* css */ `
         padding: 2px 9px;
         border-radius: 999px;
         background: var(--panel);
-        color: var(--green);
+        color: var(--link);
         font-size: 0.73rem;
         font-weight: 700;
       }
@@ -506,8 +587,8 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 600;
         white-space: nowrap;
       }
-      .state-pend { background: #f8f1de; color: #8a6b1c; }
-      .state-ok { background: #e7f2e8; color: #23684a; }
+      .state-pend { background: var(--pend-bg); color: var(--pend-ink); }
+      .state-ok { background: var(--ok-bg); color: var(--ok-ink); }
       .mock-actions {
         display: flex;
         gap: 8px;
@@ -520,10 +601,10 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 600;
         white-space: nowrap;
       }
-      .mbtn-primary { background: var(--green); color: #fff; }
+      .mbtn-primary { background: var(--btn-bg); color: var(--btn-ink); }
       .mbtn-line {
         border: 1px solid var(--line);
-        background: #fff;
+        background: var(--card);
         color: var(--body-c);
       }
       @media (max-width: 560px) {
@@ -544,6 +625,7 @@ export const PAGE_STYLE = /* css */ `
          exception this rule states, not a repeal of it. */
       .feature h2,
       .feature h3 {
+        font-family: var(--sans);
         font-size: 0.98rem;
         font-weight: 700;
         letter-spacing: -0.01em;
@@ -595,9 +677,10 @@ export const PAGE_STYLE = /* css */ `
          the adjacent sibling of the hero only /about carries, the .hero-flush + .section
          pattern above. */
       .hero-flush + .section .feature h2 {
-        font-size: clamp(1.65rem, 3.4vw, 2.15rem);
-        font-weight: 750;
-        letter-spacing: -0.025em;
+        font-family: var(--display);
+        font-size: clamp(1.6rem, 3.2vw, 2.3rem);
+        font-weight: 600;
+        letter-spacing: -0.01em;
         line-height: 1.15;
         margin: 0 0 18px;
       }
@@ -682,7 +765,7 @@ export const PAGE_STYLE = /* css */ `
       .wf-step {
         background: var(--card);
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 14px;
         padding: 15px 18px 17px;
       }
       .wf-step p { margin: 4px 0 0; font-size: 0.91rem; color: var(--body-c); }
@@ -695,7 +778,7 @@ export const PAGE_STYLE = /* css */ `
         padding: 24px 26px 26px;
         background: var(--card);
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 14px;
       }
       .wf-math p { margin: 0 0 10px; font-size: 0.91rem; max-width: 68ch; }
       .wf-math .wf-h { margin-bottom: 12px; }
@@ -713,11 +796,10 @@ export const PAGE_STYLE = /* css */ `
         font-weight: 700;
         color: var(--ink);
       }
-      /* The closing line under a section's columns: the invite line under the two price cards. */
+      /* The closing line under a section's columns: the trial line under the two price cards. */
       .wf-more { margin-top: 24px; }
-      /* Two mid-page invitations, under the client section and under the dashboard: the page
-         exists to get a sitter to ask for an invite, and the hero and the closing panel were the
-         only two places she could. */
+      /* Mid-page sign-up buttons, under the WhatsApp and client sections: without them the hero
+         and the closing panel were the only two places a sitter could sign up. */
       .mid-cta { margin-top: 28px; margin-bottom: 0; }
 
       /* ── Install ────────────────────────────────────────────────── */
@@ -729,21 +811,21 @@ export const PAGE_STYLE = /* css */ `
       .install-copy p { margin: 0 0 14px; max-width: 44ch; }
       .install-copy p:last-child { margin-bottom: 0; font-size: 0.88rem; color: var(--soft); }
       .codecard {
-        background: var(--deepest);
-        border-radius: 12px;
+        background: var(--code-bg);
+        border-radius: 14px;
         overflow: hidden;
-        box-shadow: 0 24px 60px -36px rgba(20, 41, 25, 0.9);
+        box-shadow: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
       }
       .codecard-cap {
         display: flex;
         justify-content: space-between;
         gap: 10px;
         padding: 11px 18px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+        border-bottom: 1px solid color-mix(in srgb, var(--band-ink) 9%, transparent);
         font-family: var(--mono);
         font-size: 0.7rem;
         letter-spacing: 0.06em;
-        color: #8fa896;
+        color: var(--band-mute);
       }
       .code-scroll { overflow-x: auto; }
       .codecard pre {
@@ -753,10 +835,10 @@ export const PAGE_STYLE = /* css */ `
         font-family: var(--mono);
         font-size: 0.84rem;
         line-height: 1.75;
-        color: #e8efe8;
+        color: var(--code-ink);
       }
-      .codecard .tag { color: #93c9a4; }
-      .codecard .attr { color: #d8c98a; }
+      .codecard .tag { color: var(--code-tag); }
+      .codecard .attr { color: var(--code-attr); }
       @media (min-width: 880px) {
         .install-grid { grid-template-columns: 0.85fr 1.15fr; }
       }
@@ -772,7 +854,7 @@ export const PAGE_STYLE = /* css */ `
       .price-card {
         background: var(--card);
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 14px;
         padding: 26px 26px 28px;
       }
       .price-head {
@@ -823,8 +905,8 @@ export const PAGE_STYLE = /* css */ `
         top: 18px;
         width: 9px;
         height: 5px;
-        border-left: 2px solid var(--green);
-        border-bottom: 2px solid var(--green);
+        border-left: 2px solid var(--link);
+        border-bottom: 2px solid var(--link);
         transform: rotate(-45deg);
       }
       .price-card .note { margin-top: 10px; }
@@ -832,10 +914,168 @@ export const PAGE_STYLE = /* css */ `
         .price-grid { grid-template-columns: 1fr 1fr; }
       }
 
+      /* ── On Pro: the WhatsApp example, coded ──────────────────────── */
+      /* A phone drawn in CSS on the page's own tokens, never WhatsApp's logo or brand green. It is
+         one illustration to a screen reader (role="img" with the whole conversation in its
+         aria-label, the bubbles aria-hidden). One column, the phone centred at up to 340px; from
+         880px the phone sits left and the three points beside it. */
+      .pro-grid {
+        display: grid;
+        gap: 40px;
+        align-items: center;
+      }
+      .pro-points { display: grid; gap: 24px; }
+      .pro-points .note { max-width: none; }
+      .phone {
+        width: 100%;
+        max-width: 340px;
+        margin: 0 auto;
+        padding: 18px 14px 20px;
+        border: 10px solid var(--phone);
+        border-radius: 32px;
+        background: var(--panel);
+        box-shadow: 0 1px 2px var(--shadow), 0 8px 24px var(--shadow);
+      }
+      .phone > div { display: flex; flex-direction: column; gap: 8px; }
+      .phone-cap {
+        margin: 8px 0 0;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--soft);
+      }
+      .phone-cap:first-child { margin-top: 0; }
+      .bubble {
+        margin: 0;
+        max-width: 85%;
+        padding: 8px 12px;
+        border-radius: 16px;
+        font-size: 0.88rem;
+        line-height: 1.45;
+        color: var(--ink);
+        box-shadow: 0 1px 1px var(--shadow);
+      }
+      .bubble-in {
+        align-self: flex-start;
+        background: var(--bubble-in);
+        border-bottom-left-radius: 4px;
+      }
+      .bubble-out {
+        align-self: flex-end;
+        background: var(--bubble-out);
+        border-bottom-right-radius: 4px;
+      }
+      /* The hero's request card, standing in the flow rather than floating over a screenshot. */
+      .alert-card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+      .alert-card > span { display: block; }
+      .pro-also { margin: 56px 0 20px; }
+      @media (min-width: 880px) {
+        .pro-grid { grid-template-columns: minmax(0, 340px) 1fr; gap: 56px; }
+      }
+      /* Two cards read as a pair: the three-column default would leave an empty third column. */
+      @media (min-width: 960px) { .features-2 { grid-template-columns: 1fr 1fr; } }
+      /* The guide's "Which number?" pair is two short cards: side by side from a phone-landscape width. */
+      @media (min-width: 640px) { .legal .features-2 { grid-template-columns: 1fr 1fr; } }
+
+      /* The setup hub's guide cards: a whole-card link, so no underline and a border that answers
+         the pointer. The "Which number?" pair on the WhatsApp guide nests two .feature cards in a
+         .features grid inside a .legal block, whose stacked-block margin must not push the second
+         card down. */
+      .guide-card {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 20px;
+      }
+      .guide-card:hover,
+      .guide-card:focus-visible { border-color: var(--link); }
+      .legal .features .feature + .feature { margin-top: 0; }
+
+      /* ── Plan badge and tagline ─────────────────────────────────── */
+      .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: var(--chip-bg);
+        color: var(--chip-ink);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .price-tag {
+        margin: -6px 0 16px;
+        font-size: 0.92rem;
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      /* ── Who's behind it ────────────────────────────────────────── */
+      .story-head { margin-bottom: 0; }
+      .quote {
+        margin: 20px 0;
+        padding: 18px 20px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .quote blockquote {
+        margin: 0 0 8px;
+        font-family: var(--display);
+        font-size: 1.1rem;
+        color: var(--ink);
+      }
+      .quote figcaption { font-size: 0.84rem; color: var(--soft); }
+
+      /* ── Questions: native details, so no script ───────────────── */
+      /* minmax(0, 1fr): the snippet's <pre> is max-content wide, and an auto track would grow to
+         it and push the page sideways on a phone; its own .code-scroll scrolls instead. */
+      .faq-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; max-width: 760px; }
+      .faq-item {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .faq-item summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 48px;
+        padding: 12px 18px;
+        cursor: pointer;
+        list-style: none;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .faq-item summary::-webkit-details-marker { display: none; }
+      .faq-item summary::after {
+        content: "+";
+        flex: none;
+        font-size: 1.3rem;
+        line-height: 1;
+        color: var(--link);
+      }
+      .faq-item[open] summary::after { content: "\\2212"; }
+      .faq-a { padding: 0 18px 18px; }
+      .faq-a p { margin: 0 0 12px; font-size: 0.94rem; max-width: 64ch; }
+      .faq-a p:last-of-type { margin-bottom: 0; }
+      .faq-a .codecard { margin-top: 16px; }
+
       /* ── CTA band ───────────────────────────────────────────────── */
       .cta-band { padding: 40px 0 96px; }
       .cta-panel {
-        background: linear-gradient(140deg, var(--deep) 0%, var(--deepest) 80%);
+        background: var(--band-bg);
         border-radius: 18px;
         padding: clamp(44px, 7vw, 72px) clamp(24px, 6vw, 72px);
         text-align: center;
@@ -844,26 +1084,25 @@ export const PAGE_STYLE = /* css */ `
          ink, invisible on the dark green. */
       .cta-panel h1,
       .cta-panel h2 {
-        color: #fff;
+        color: var(--band-ink);
         font-size: clamp(1.7rem, 3.6vw, 2.3rem);
-        font-weight: 750;
-        letter-spacing: -0.025em;
+        letter-spacing: -0.01em;
         margin: 0 0 12px;
       }
       .cta-panel p {
         margin: 0 auto 28px;
         max-width: 46ch;
-        color: #c4d2c6;
+        color: var(--band-soft);
       }
       .cta-panel .cta-row { justify-content: center; margin-bottom: 0; }
       .cta-panel .signin-inverse {
         align-self: center;
-        color: #c4d2c6;
+        color: var(--band-soft);
         font-size: 0.9rem;
         text-decoration: underline;
         text-underline-offset: 3px;
       }
-      .cta-panel .signin-inverse:hover { color: #fff; }
+      .cta-panel .signin-inverse:hover { color: var(--band-ink); }
 
       /* ── Footer ─────────────────────────────────────────────────── */
       .foot {
@@ -902,17 +1141,17 @@ export const PAGE_STYLE = /* css */ `
       }
 
       :focus-visible {
-        outline: 3px solid var(--green);
+        outline: 3px solid var(--link);
         outline-offset: 3px;
         border-radius: 4px;
       }
-      /* The ring above is --green because every ground on this site is light, with one exception:
-         the CTA panel's dark gradient, where #2e6440 on #1d3826 is 1.83:1 and reads as no ring at
-         all. That band holds the invite button, the "already have an account" link and the tour's
+      /* The ring above is --link, which suits every ground on this site but one: the CTA panel's
+         dark band, where the light scheme's link green on the band green is under 2:1 and reads as no
+         ring at all. That band holds the invite button, the "already have an account" link and the tour's
          demo/pricing links, so a keyboard visitor loses the page's primary action. Only the COLOR
          is overridden, so width, offset and radius stay one rule; the panel's own form fields
-         already focus white, which is the shape this follows. */
-      .cta-panel :focus-visible { outline-color: #fff; }
+         already focus in the band's ink, which is the shape this follows. */
+      .cta-panel :focus-visible { outline-color: var(--band-ink); }
       @media (prefers-reduced-motion: reduce) {
         html { scroll-behavior: auto; }
         .btn { transition: none; }
@@ -930,27 +1169,27 @@ export const PAGE_STYLE = /* css */ `
       .signup-field label {
         font-size: 0.82rem;
         font-weight: 600;
-        color: #c4d2c6;
+        color: var(--band-soft);
       }
-      .signup-optional { font-weight: 400; color: #8fa896; }
+      .signup-optional { font-weight: 400; color: var(--band-mute); }
       .signup-field input,
       .signup-field select,
       .signup-field textarea {
         width: 100%;
         padding: 10px 12px;
         border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        background: rgba(255, 255, 255, 0.06);
-        color: #fff;
+        border: 1px solid var(--field-line);
+        background: var(--field-bg);
+        color: var(--band-ink);
         font-family: var(--sans);
         font-size: 0.92rem;
       }
       .signup-field input::placeholder,
-      .signup-field textarea::placeholder { color: #8fa896; }
+      .signup-field textarea::placeholder { color: var(--band-soft); }
       .signup-field input:focus,
       .signup-field select:focus,
       .signup-field textarea:focus {
-        outline: 2px solid #fff;
+        outline: 2px solid var(--band-ink);
         outline-offset: 1px;
       }
       .signup-field select option { color: var(--ink); }
@@ -974,7 +1213,23 @@ export const PAGE_STYLE = /* css */ `
         margin-top: 4px;
       }
       .signup-submit button { border: 0; cursor: pointer; }
+      /* The sign-up pages' lines on the dark panel. .cta-panel p already sets their color; the
+         refusal that replaces the lead is the band's ink, and a note's links would otherwise take
+         .note a's page ink, which is dark on the band in the light scheme. */
+      .cta-panel .signup-error { color: var(--band-ink); }
+      .cta-panel .note a {
+        color: var(--band-ink);
+        text-decoration-color: var(--band-soft);
+      }
+      .cta-panel .note a.signup-back { color: var(--band-soft); }
       @media (min-width: 640px) {
         .signup-form { grid-template-columns: 1fr 1fr; }
       }
 `;
+
+/**
+ * What the pages serve: RAW with its comments stripped, so the notes above stay in the source and
+ * never reach a visitor. Safe as a regex because no CSS string in RAW contains `/*`
+ * (page-style.test.ts checks the served sheet).
+ */
+export const PAGE_STYLE = RAW.replace(/\/\*[\s\S]*?\*\//g, '');

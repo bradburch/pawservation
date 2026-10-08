@@ -129,7 +129,7 @@ describe('GET /signup', () => {
 describe('the sign-up pages read well', () => {
   it('styles the h1 on the dark panel (it was ink-on-green, invisible)', async () => {
     const { PAGE_STYLE } = await import('../lib/page-style');
-    expect(PAGE_STYLE).toMatch(/\.cta-panel h1[^{]*\{[^}]*color: #fff/);
+    expect(PAGE_STYLE).toMatch(/\.cta-panel h1[^{]*\{[^}]*color: var\(--band-ink\)/);
   });
 
   it('/signup leads with the trial, and says "sign-up link" at most once', async () => {
@@ -137,6 +137,7 @@ describe('the sign-up pages read well', () => {
     configure(env);
     const body = await (await app.request('/signup', {}, env)).text();
     expect(body).toContain('start your 30-day free trial');
+    expect(body).toContain('Your 30-day free trial starts when you sign up. No card needed.');
     expect(body.match(/sign-up link/g)?.length ?? 0).toBeLessThanOrEqual(1);
   });
 
@@ -145,6 +146,10 @@ describe('the sign-up pages read well', () => {
     configure(env);
     const body = await (await app.request('/signup/sent', {}, env)).text();
     expect(body.match(/Check your email/g)).toHaveLength(2); // <title> and <h1>, never the body copy
+    expect(body).toContain(
+      'We&rsquo;ve sent a sign-up link to that address if it&rsquo;s new to Pawservation.',
+    );
+    expect(body).toContain('Check your spam folder');
     expect(body).toContain('href="/getting-started"');
     // The guide link resolves (the page is a worker route, not an asset).
     expect((await app.request('/getting-started', {}, env)).status).toBe(200);

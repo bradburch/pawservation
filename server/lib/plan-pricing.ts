@@ -17,11 +17,11 @@ export const PRICING = {
 /**
  * THE price sentence. Every surface that states both plans states them in these words, so the tour,
  * the setup guide, the landing pricing section and the product llms.txt cannot drift into four
- * phrasings of one fact (they had: "$15 a month for one sitter", "$15 per sitter per month", ...).
- * Solo is one sitter, so it carries no "per sitter"; Pro sells extra sitters, so it does. Plain
- * text, no entities, because llms.txt is not HTML.
+ * phrasings of one fact. Both plans are one sitter: an account is one person's book, and extra
+ * sitters are not built, so neither price carries "per sitter". Plain text, no entities, because
+ * llms.txt is not HTML.
  */
-export const PRICE_LINE = `Solo is $${PRICING.soloMonthly} a month. Pro is $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year, per sitter.`;
+export const PRICE_LINE = `Solo is $${PRICING.soloMonthly} a month. Pro is $${PRICING.proMonthly} a month or $${PRICING.proAnnual} a year.`;
 
 /**
  * What the trial is and what happens when it ends, VERIFIED rather than assumed:
@@ -35,4 +35,4 @@ export const PRICE_LINE = `Solo is $${PRICING.soloMonthly} a month. Pro is $${PR
  *    working: the dashboard goes read-only and her clients can still send requests.
  * HTML (it carries entities), and free of the word the landing and tour ban as a checkout verb.
  */
-export const TRIAL_LINE = `The ${PRICING.trialDays}-day free trial is Solo, and you don&rsquo;t need a card to start it. Choose Pro during the trial and its assistant, booking by WhatsApp and card payments switch on right away; choosing a plan doesn&rsquo;t extend the trial, and you&rsquo;re first charged when it ends. If you haven&rsquo;t chosen a plan when the trial ends, your dashboard goes read-only until you do, and your clients can still send requests.`;
+export const TRIAL_LINE = `Your ${PRICING.trialDays}-day free trial includes everything in Solo, and you don&rsquo;t need a card to start it. Choose Pro during the trial and it switches on right away; choosing a plan doesn&rsquo;t extend the trial, and you&rsquo;re first charged when it ends. If you haven&rsquo;t chosen a plan by then, your dashboard goes read-only until you do, and your clients can still send requests.`;

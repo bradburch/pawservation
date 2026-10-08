@@ -83,6 +83,9 @@ import { Hint } from './Hint';
 const TRIAL_IS_SOLO =
   'Your trial includes everything in Solo. The booking assistant, booking by WhatsApp and card payments need Pro.';
 
+/** Under "Free trial" when `/config` says Pro is already on for her account. */
+const PRO_ON = 'Pro features are switched on for your account.';
+
 const CHECKOUT_FAILED = 'Could not start checkout — try again.';
 
 /** The sibling of CHECKOUT_FAILED, for the other hosted page. Same rule: this is the ONE message
@@ -581,7 +584,9 @@ export function PlanPanel({
         {!settings.disabled && trialUntil !== null && ` until ${trialUntil}`}
       </p>
       {/* The trial is a Solo-level comp: say so, so Pro's extras are not a surprise. */}
-      {!settings.disabled && trialUntil !== null && <p className="pb-hint">{TRIAL_IS_SOLO}</p>}
+      {!settings.disabled && trialUntil !== null && (
+        <p className="pb-hint">{config?.premium?.assistant === true ? PRO_ON : TRIAL_IS_SOLO}</p>
+      )}
       {settings.disabled && <p className="pb-hint">{ACCOUNT_OFF}</p>}
       {/* SUBSCRIBE HIDES ON A LIVE PLAN, which is the UI half of the double-subscription question;
           the other half is a server-side refusal on the checkout route, which is the paid surface's

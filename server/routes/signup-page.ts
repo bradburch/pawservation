@@ -91,6 +91,9 @@ async function plan(env: Env, email: string, mode: SignupMode): Promise<Plan> {
   return { link: { kind: 'sitter' }, notice: 'open' };
 }
 
+// noindex: the sign-up pages are transactional, not landing targets, and a searcher who lands on
+// a confirmation has arrived at a dead end. Kept crawlable so the tag is read; see
+// public/robots.txt for why a Disallow would defeat it.
 function shell(title: string, body: string, opts: { turnstile?: boolean } = {}): string {
   return `<!doctype html>
 <html lang="en">
@@ -98,9 +101,6 @@ function shell(title: string, body: string, opts: { turnstile?: boolean } = {}):
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${title}</title>
-    <!-- Transactional, not a landing target: the homepage carries the same form, and a searcher
-         who lands on a confirmation has arrived at a dead end. Kept crawlable so this tag is read;
-         see public/robots.txt for why a Disallow would defeat it. -->
     <meta name="robots" content="noindex" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -111,7 +111,7 @@ function shell(title: string, body: string, opts: { turnstile?: boolean } = {}):
     <main class="wrap" style="padding:96px 0;">
       <div class="cta-panel" style="max-width:640px;margin:0 auto;">
         ${body}
-        <p class="note" style="margin:20px auto 0;"><a href="/" style="color:#c4d2c6;">&larr; Back to the homepage</a></p>
+        <p class="note" style="margin:20px auto 0;"><a class="signup-back" href="/">&larr; Back to the homepage</a></p>
       </div>
     </main>
   </body>
@@ -129,8 +129,11 @@ function renderSignupPage(
     ? 'Enter your email and we&rsquo;ll be in touch within a day to set up your account.'
     : `Enter your email to start your ${PRICING.trialDays}-day free trial. We&rsquo;ll email you a link to set your password.`;
   const lead = opts.error
-    ? `<p class="note" role="alert" style="color:#fff;margin:0 auto 8px;font-size:1rem;">${opts.error}</p>`
-    : `<p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">${intro}</p>`;
+    ? `<p class="note signup-error" role="alert" style="margin:0 auto 8px;font-size:1rem;">${opts.error}</p>`
+    : `<p class="note" style="margin:0 auto 8px;font-size:1rem;">${intro}</p>`;
+  const trial = review
+    ? ''
+    : `\n        <p class="note" style="margin:12px auto 0;">Your ${PRICING.trialDays}-day free trial starts when you sign up. No card needed.</p>`;
   return shell(
     'Pawservation: sign up',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">Sign up for Pawservation</h1>
@@ -140,7 +143,7 @@ function renderSignupPage(
           siteKey,
           attribution: opts.attribution,
           submitLabel: review ? 'Ask for an account' : 'Start my free trial',
-        })}`,
+        })}${trial}`,
     { turnstile: Boolean(siteKey) },
   );
 }
@@ -150,16 +153,16 @@ function renderSignupPage(
 function renderSentPage(mode: SignupMode, prototypeLink?: string): string {
   const open = mode === 'open';
   const copy = open
-    ? 'If that address can sign up, your link is on its way. It works for 30 minutes.'
+    ? 'We&rsquo;ve sent a sign-up link to that address if it&rsquo;s new to Pawservation. It works for 30 minutes. Nothing there? Check your spam folder, or try again in a few minutes.'
     : 'We&rsquo;ll email you within a day, once your account is ready.';
   const dev = prototypeLink
-    ? `<p class="note" style="margin:12px auto 0;"><a href="${htmlEscape(prototypeLink)}" style="color:#fff;">Open your sign-up link (local development)</a></p>`
+    ? `<p class="note" style="margin:12px auto 0;"><a href="${htmlEscape(prototypeLink)}">Open your sign-up link (local development)</a></p>`
     : '';
   return shell(
     open ? 'Pawservation: Check your email' : 'Pawservation: request received',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">${open ? 'Check your email' : 'Thanks, we&rsquo;ve got it'}</h1>
-        <p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">${copy}</p>${dev}
-        <p class="note" style="color:#c4d2c6;margin:12px auto 0;">While you wait, read <a href="/getting-started" style="color:#fff;">the setup guide</a>. Already have an account? <a href="/admin" style="color:#fff;">Sign in</a>.</p>`,
+        <p class="note" style="margin:0 auto 8px;font-size:1rem;">${copy}</p>${dev}
+        <p class="note" style="margin:12px auto 0;">While you wait, read <a href="/getting-started">the setup guide</a>. Already have an account? <a href="/admin">Sign in</a>.</p>`,
   );
 }
 
@@ -167,7 +170,7 @@ function renderUnavailable(): string {
   return shell(
     'Pawservation: sign up',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">Sign-up is temporarily unavailable</h1>
-        <p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">Please try again later.</p>`,
+        <p class="note" style="margin:0 auto 8px;font-size:1rem;">Please try again later.</p>`,
   );
 }
 

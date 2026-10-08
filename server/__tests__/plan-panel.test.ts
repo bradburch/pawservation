@@ -108,8 +108,9 @@ describe('the plan panel gates on the DEPLOYMENT, not on the entitlement', () =>
     // `origin` is a property of the deployment, `assistant` of the tenant. Do not "fix" this into a
     // match with that one. Asserted over executable text, so the docblock is free to explain the
     // difference in the words a reader needs.
-    expect(PANEL).not.toContain('premium?.assistant');
-    expect(PANEL).not.toContain('premium.assistant');
+    // `premium?.assistant === true` is allowed in ONE place: the sentence under "Free trial"
+    // (a sitter whose Pro is already on). It never gates a control.
+    expect(PANEL).not.toMatch(/premium\??\.assistant(?! === true \? PRO_ON)/);
   });
 
   it('also requires pricing.subscribe, the flag that says a checkout route exists', () => {
@@ -409,8 +410,7 @@ describe('the Manage plan control', () => {
     // Not `premium.assistant`: that is the tenant's entitlement, false for a Solo subscriber who
     // nonetheless has a plan to manage.
     expect(PANEL).not.toMatch(/canManage[^\n]*sellingIsOn/);
-    expect(PANEL).not.toContain('premium?.assistant');
-    expect(PANEL).not.toContain('premium.assistant');
+    expect(PANEL).not.toMatch(/premium\??\.assistant(?! === true \? PRO_ON)/);
     // And that the control is RENDERED on that condition, with the sitter's own word for it. A
     // mutation that deleted the button and left `canManage` computed-and-unused kept every other
     // pin here green, and neither typecheck nor lint objected.
