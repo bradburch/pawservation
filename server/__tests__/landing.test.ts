@@ -7,9 +7,8 @@ import { createTestEnv } from './helpers';
 
 const IMG_DIR = join(import.meta.dirname, '..', '..', 'public', 'img', 'landing');
 
-// Per-file byte budgets from the landing-marketing-redesign spec — the weight budget is a
-// failing test, not a convention. Regeneration recipe lives in
-// docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md.
+// Per-file byte budgets: the weight budget is a failing test, not a convention. How to retake the
+// four shots, inside the booking window and within these budgets, is docs/landing-screenshots.md.
 const IMG_BUDGETS_KB: Record<string, number> = {
   'widget-hero.webp': 90,
   'step-services.webp': 40,
@@ -73,10 +72,12 @@ describe('GET / — landing page', () => {
 
   it('tells one boarding story: the phone example, the hero card and its screenshot agree', async () => {
     const body = await landingBody();
-    // The hero screenshot is a three-night stay quoted at $150, and the coded card over it says
-    // so. The WhatsApp example is the same stay told by message, so a reader never meets two
-    // boarding rates on one page.
-    expect(body).toContain('a three-night boarding stay selected and a $150 quote');
+    // The hero screenshot is a three-night stay, Sat 14 to Tue 17, quoted at $150, and the coded
+    // card over it says so. The WhatsApp example is the same stay told by message, so a reader
+    // never meets two boarding rates on one page.
+    expect(body).toContain(
+      'a three-night boarding stay selected, Saturday the 14th to Tuesday the 17th',
+    );
     expect(body).toContain(
       '<span class="req-what">Boarding &middot; 3 nights &middot; $150</span>',
     );
@@ -456,6 +457,33 @@ describe('GET / — landing page', () => {
       expect(size, `${file} over its ${kb}KB budget`).toBeLessThanOrEqual(kb * 1024);
     }
     expect(total, 'total image weight').toBeLessThanOrEqual(TOTAL_BUDGET_KB * 1024);
+  });
+
+  it('the recipe the screenshots were taken from is tracked', () => {
+    expect(
+      statSync(join(IMG_DIR, '..', '..', '..', 'docs', 'landing-screenshots.md')).isFile(),
+    ).toBe(true);
+  });
+
+  it('the copy around the screenshots names the stay and month they show', async () => {
+    // The shots show Boarding for Bella, Sat 14 to Tue 17 November 2026: 3 nights, $150. The
+    // hero alt, the hero's request card, the phone example, the step alts and the dashboard mock
+    // all say the same stay, so no line on the page contradicts a picture beside it.
+    const body = await landingBody();
+    expect(body).not.toMatch(/20(28|29)/);
+    expect(body).toContain('a November calendar with a three-night boarding stay selected');
+    expect(body).toContain(
+      '<span class="req-what">Boarding &middot; 3 nights &middot; $150</span>',
+    );
+    expect(body).toContain('Sat 14th to Tue 17th');
+    expect(body).toContain('<span class="mockdash-when">November 2026</span>');
+    expect(body).toContain('Nov 14 &ndash; Nov 17 &middot; 1 pet &middot; $150');
+    expect(body).toMatch(/alt="[^"]*3 nights, \$150\.00[^"]*"/);
+    // Step 01 shows the client's service picker, so its words describe that picture.
+    expect(body).toContain('Your clients choose from them on your booking page.');
+    // The step headings carry no trailing period, like every other h3 on the page.
+    for (const h of [...body.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1]))
+      expect(h, h).not.toMatch(/\.$/);
   });
 
   it('footer carries no open-source / self-host block, only the created-by line', async () => {

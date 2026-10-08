@@ -271,8 +271,9 @@ app.get('/setup.html', page('setup.html'));
  * <details>, which opens without script. Its "Sign up" links are rewritten per request (the route
  * below) to carry the visitor's already-cleaned attribution to /signup.
  * The embed snippet in the FAQ is shown as escaped text (&lt;script&gt;…) so the served body
- * genuinely contains no <script tag. Screenshot regeneration recipe (fixed 2028 seed months):
- * docs/superpowers/specs/2026-07-19-landing-marketing-redesign.md.
+ * genuinely contains no <script tag. The screenshots show Boarding for Bella, Sat 14 to Tue 17
+ * November 2026 (3 nights, $150), and the hero alt, request card, phone example, step alts and
+ * dashboard mock all name that stay; docs/landing-screenshots.md is the recipe for retaking them.
  */
 /*
  * Notes on the landing markup below, moved out of the template so none of them is served.
@@ -294,9 +295,9 @@ app.get('/setup.html', page('setup.html'));
  * [div class="cta-row"] The one button on the page that names the trial (owner, 2026-10-08). Every
  *     other button, the nav's included, reads "Sign up": the nav is one row on measured
  *     breakpoints, and the rest sit beside the price that explains them.
- * [div class="visual-panel"] Screenshots are captured from the seeded demo (fixed 2028 months,
- *     never "today"). Regenerate via the recipe in docs/superpowers/specs/2026-07-19-landing-
- *     marketing-redesign.md whenever the widget's look changes. The card's three nights at $150 is
+ * [div class="visual-panel"] Screenshots are captured from the seeded demo, in a month inside the
+ *     demo sitter's booking window. Retake them with docs/landing-screenshots.md whenever the
+ *     widget's look changes or the month leaves the window. The card's three nights at $150 is
  *     the screenshot's own quote, and the WhatsApp example in #pro tells the same stay.
  * [section class="section band"] Who it is for, in her clients' own words: each card is a question
  *     she answers by text today and what answers it instead, with no figure the product cannot
@@ -390,7 +391,7 @@ const LANDING_HTML = `<!doctype html>
               <div class="screen">
                 <img
                   src="/img/landing/widget-hero.webp"
-                  alt="The Pawservation booking widget: a June calendar with a three-night boarding stay selected and a $150 quote"
+                  alt="The Pawservation booking widget: a November calendar with a three-night boarding stay selected, Saturday the 14th to Tuesday the 17th"
                 />
               </div>
               <div class="screen-fade" aria-hidden="true"></div>
@@ -467,25 +468,25 @@ const LANDING_HTML = `<!doctype html>
               <div class="frame">
                 <img
                   src="/img/landing/step-services.webp"
-                  alt="The booking page's service picker: Boarding selected from a row of a sitter's services, including House sitting, Daycare, Walk, Check-in and Morning walk"
+                  alt="A sitter's services as her clients see them on her booking page: Boarding selected, beside House sitting, Daycare, Walk, Check-in and Morning walk"
                 />
               </div>
               <div class="step-body">
                 <span class="step-no">01</span>
-                <h3>You set your services.</h3>
-                <p>Pick from walks, drop-in visits, boarding, house sitting and daycare, and type your prices.</p>
+                <h3>Your services, your prices</h3>
+                <p>Pick from walks, drop-in visits, boarding, house sitting and daycare, and type your prices. Your clients choose from them on your booking page.</p>
               </div>
             </li>
             <li class="step-card">
               <div class="frame frame-tall">
                 <img
                   src="/img/landing/step-calendar.webp"
-                  alt="Month grid where full days are struck through and the weekends of a weekday-only service are struck through as unavailable"
+                  alt="The November month grid with the 14th to the 17th selected: days off struck through, nearly full days ringed, and the client's own bookings dotted"
                 />
               </div>
               <div class="step-body">
                 <span class="step-no">02</span>
-                <h3>Clients pick their dates.</h3>
+                <h3>Clients pick their dates</h3>
                 <p>Your calendar shows only the days you can take, and the price shows before they ask.</p>
               </div>
             </li>
@@ -493,12 +494,12 @@ const LANDING_HTML = `<!doctype html>
               <div class="frame">
                 <img
                   src="/img/landing/step-request.webp"
-                  alt="Booking summary showing the selected dates, an estimated cost of $150, and a Request Booking button"
+                  alt="The Request Booking button beside the quote for the stay: 3 nights, $150.00"
                 />
               </div>
               <div class="step-body">
                 <span class="step-no">03</span>
-                <h3>You confirm with one tap.</h3>
+                <h3>You confirm with one tap</h3>
                 <p>Each request reaches you with the dates, the pets and the price. Nothing is booked until you say yes.</p>
               </div>
             </li>
@@ -605,12 +606,12 @@ const LANDING_HTML = `<!doctype html>
             <div class="mockdash-top">
               <span class="mockdash-title">Bookings</span>
               <span class="mockdash-count">2 pending</span>
-              <span class="mockdash-when">August 2028</span>
+              <span class="mockdash-when">November 2026</span>
             </div>
             <div class="mock-row">
               <div class="mock-info">
                 <div class="mock-who">Jess D. &middot; Boarding</div>
-                <div class="mock-meta">Aug 20 &ndash; Aug 23 &middot; 1 pet &middot; $150</div>
+                <div class="mock-meta">Nov 14 &ndash; Nov 17 &middot; 1 pet &middot; $150</div>
               </div>
               <span class="state state-pend">Pending</span>
               <div class="mock-actions">
@@ -621,7 +622,7 @@ const LANDING_HTML = `<!doctype html>
             <div class="mock-row">
               <div class="mock-info">
                 <div class="mock-who">Priya S. &middot; Morning walk</div>
-                <div class="mock-meta">Aug 10, 9:00 AM &middot; 1 pet &middot; $20</div>
+                <div class="mock-meta">Nov 12, 9:00 AM &middot; 1 pet &middot; $20</div>
               </div>
               <span class="state state-pend">Pending</span>
               <div class="mock-actions">
@@ -632,7 +633,7 @@ const LANDING_HTML = `<!doctype html>
             <div class="mock-row">
               <div class="mock-info">
                 <div class="mock-who">Marco T. &middot; Daycare</div>
-                <div class="mock-meta">Aug 8 &middot; 2 pets &middot; $70 &middot; paid in full</div>
+                <div class="mock-meta">Nov 6 &middot; 2 pets &middot; $70 &middot; paid in full</div>
               </div>
               <span class="state state-ok">Confirmed</span>
               <div class="mock-actions">
@@ -937,7 +938,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <div class="frame">
                 <img
                   src="/img/landing/step-services.webp"
-                  alt="The widget's service picker: Boarding selected from a row of services including House sitting, Daycare, Walk, Check-in, and Morning walk"
+                  alt="The widget's service cards: Boarding selected, beside House sitting, Daycare, Walk, Check-in and Morning walk"
                 />
               </div>
               <div class="step-body">
@@ -950,7 +951,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <div class="frame frame-tall">
                 <img
                   src="/img/landing/step-calendar.webp"
-                  alt="Month grid where full days are struck through and the weekends of a weekday-only service are struck through as unavailable"
+                  alt="The November month grid with the 14th to the 17th selected: days off struck through, nearly full days ringed, and the client's own bookings dotted"
                 />
               </div>
               <div class="step-body">
@@ -963,7 +964,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <div class="frame">
                 <img
                   src="/img/landing/step-request.webp"
-                  alt="Booking summary showing the selected dates, an estimated cost of $150, and a Request Booking button"
+                  alt="The Request Booking button beside the quote for the stay: 3 nights, $150.00"
                 />
               </div>
               <div class="step-body">
