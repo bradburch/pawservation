@@ -439,7 +439,7 @@ export const PAGE_STYLE = /* css */ `
       }
 
       /* ── Section scaffolding ────────────────────────────────────── */
-      section { scroll-margin-top: 80px; }
+      [id] { scroll-margin-top: 80px; }
       .section { padding-block: clamp(56px, 8vw, 104px); }
       .section-head { max-width: 60ch; margin-bottom: 48px; }
       .label {

@@ -112,7 +112,11 @@ describe('GET /how-it-works — the tour page', () => {
     // her tap, the same rule "Nothing books itself." states for every other path.
     expect(body).toContain('a friendly assistant');
     expect(body).toContain('WhatsApp alert with Confirm and Decline buttons');
-    expect(body).toContain('<h3>An assistant for your back office</h3>');
+    // One noun per thing across public pages: the landing calls it the back-office helper, and
+    // "assistant" is the client-facing one.
+    expect(body).toContain('<h3>A helper for your back office</h3>');
+    expect(body).not.toContain('An assistant for your back office');
+    expect(body).not.toContain('back-office assistant');
     // Card payments are a card in that section, not the headline. The Stripe arrangement is still
     // stated ONCE (the Services aside, pinned above), so this card names the fee terms only.
     expect(body).toContain('Stripe&rsquo;s published rate and no fee to Pawservation');
@@ -731,7 +735,7 @@ describe('the landing page claims only what ships', () => {
     expect(body).not.toMatch(/upgrade now|buy now|subscribe|enter your card/i);
   });
 
-  it('keeps the back-office assistant bullet on the Pro card', async () => {
+  it('keeps the back-office helper bullet on the Pro card', async () => {
     const body = await landingBody();
     // The "which pet combinations have no price" clause went with the September 2026 landing
     // trim: it is codebase vocabulary on a pricing card. The bullet itself is what stays pinned.

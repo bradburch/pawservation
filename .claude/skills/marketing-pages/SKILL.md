@@ -33,6 +33,10 @@ These stay in the root `CLAUDE.md` because they catch you when you are doing som
   reschedule or cancel; she gets each new request as an alert with Confirm and Decline; the client
   hears the answer. The calls to action read "Sign up" on the same instruction, and stay truthful
   only beside the sentence that we email a sign-up link, which `/signup` does (see the next rule).
+  The one exception (owner decision 2026-10-08) is the landing hero's primary button, which names
+  the trial: "Start your 30-day free trial", the figure interpolated from `PRICING.trialDays`, still a
+  plain link to `/signup`. "Free" appears only inside "free trial"; "free tier", "free plan" and
+  "free forever" stay banned, and so does invite wording ("ask for an invite", "waitlist").
 - **`/signup` is the ONE page with a third-party script**: Cloudflare Turnstile's widget, which
   needs `script-src` and `frame-src` for `https://challenges.cloudflare.com`. The header middleware
   adds both for that exact path and nowhere else; every "Sign up" on the marketing pages is a
@@ -72,7 +76,8 @@ pages, and carries sign-up attribution.
 
 ## `pageHead` and the canonical
 
-All six pages build their head through `pageHead(path, title, description)` in `server/index.ts`,
+All six pages build their head through `pageHead(path, title, description)` in
+`server/lib/page-chrome.ts` (beside `pageFooter()` and `STRIPE_LINK`),
 which emits an **absolute** `rel="canonical"` pinned to `BRAND_ORIGIN` (`server/lib/email.ts`,
 exported for this — **one host constant, never two**) alongside the description and Open Graph tags.
 
@@ -168,9 +173,9 @@ no price at all. The one surface that cannot interpolate anything is `public/img
 bakes the price into the image, so a change to `soloMonthly` means regenerating that card by the
 recipe in `docs/og-card.md`.
 
-The invite form is the only call to action either card carries. There is no billing code in this
-repo, so the copy says a trial exists and says nothing about how it is entered or ended, and it
-claims nothing about whether a card is required.
+Each price card's one call to action is a plain "Sign up" link to `/signup`. There is no billing
+code in this repo, so the copy says a trial exists and how it starts (an email, no card, which is
+all `/signup` asks for) and says nothing about how it is ended.
 
 ## `/about` and `/contact` are the trust-anchor pages
 
@@ -220,7 +225,7 @@ was instead of being it.
 The page is also not a call to action. Its founder story used to close by asking sitters to try
 the product "while it's still early", and the owner cut that on 2026-09-09 for the same reason he
 narrowed the page: `/about` states why the thing exists, and recruiting is the landing page's
-invite form, already the only call to action this site carries. The demo-and-tour line that now
+job, through its links to `/signup`. The demo-and-tour line that now
 ends the page stays, because it is wayfinding for a reader who has finished it. That deletion also
 took the page's only statements that this is a small independent product with no sales team and
 that questions reach a person; `/contact` makes both in its own words ("There is no support desk
@@ -275,15 +280,16 @@ and most are a single declaration, which is the size of thing a tidy-up deletes.
   of different heights and their tops legitimately differ on one row). **`.nav-links-5` is the
   tuning for a five-link row** — 20px gaps and the plain sign-in link dropped below 890px — and BOTH
   five-link headers (`/` and `/how-it-works`) carry it; `/how-it-works` wrapped from 780px to 829px
-  until it did. A sixth link in either row needs new measurements, not a sixth `<a>`. The one
-  remaining wrap is the landing's own at 320-350px, which the CSS documents as deliberate.
+  until it did. A sixth link in either row needs new measurements, not a sixth `<a>`. Measured on
+  2026-10-08, every page's header is one row at 320, 375, 768 and 1280px in both color schemes;
+  the wrap the CSS documents below 560px is the safety valve, not a layout anyone sees today.
 - **Heading levels never skip.** `.feature` is a landing-page CARD, where `h3` is right because a
   `.section-head` `h2` sits above it. The four prose pages carry no `.section-head`, so the same
   block there must be `h2` or the page reads h1 straight to h3. PAGE_STYLE lists `.feature h2`
   beside `.feature h3` so the LEVEL is corrected without changing the LOOK.
-- **The focus ring is `--green`, which disappears on the one dark ground.** `.cta-panel
-:focus-visible` overrides the COLOR alone to `#fff` (1.83:1 becomes ~14:1). That band holds the
-  invite form's submit button, so this is the page's primary action.
+- **The focus ring is the link color, which disappears on the one dark ground.** `.cta-panel
+:focus-visible` overrides the COLOR alone to `var(--band-ink)`. That band holds the final
+  "Sign up" button, so this is the page's last call to action.
 - **Prose gets a reading measure.** `.legal p`/`.legal li` are capped at **52ch**, the figure
   `.section-head p` already uses, roughly 72 characters a line. Uncapped they ran the full 1072px
   `.wrap` at about 130 characters, under a hero whose own `h1` is 15ch and whose `.sub` is 48ch — a
@@ -304,6 +310,19 @@ and most are a single declaration, which is the size of thing a tidy-up deletes.
   no other page has, so widening any of them to `.hero h1`, `.feature h2` or `.legal` would
   silently re-scale the landing cards and the three other prose pages. `seo.test.ts` pins both
   halves together — the rules exist, AND no other page carries anything they can match.
+- **Every color is a role token, and dark mode is the same tokens redefined once.** `PAGE_STYLE`
+  has exactly two `:root` blocks, the second under `@media (prefers-color-scheme: dark)`, and no
+  color literal anywhere else, in the CSS or in any page's `style=` attribute (`/signup` included).
+  `page-style.test.ts` pins all three and computes 4.5:1 for every text pair in `PAIRS` in BOTH
+  schemes, so a new color that carries text is a token in both blocks and a line in `PAIRS`.
+- **Headings use one display face, self-hosted under a 40KB budget.** Fraunces SemiBold, latin
+  subset, at `/fonts/fraunces-600.woff2` (18KB) with its license beside it as
+  `/fonts/OFL-fraunces.txt`, through the `--display` token; body text stays the system stack.
+  Same origin, so `LOCKED_CSP` needs nothing new. `page-style.test.ts` fails a file over 40KB.
+- **Every in-page target clears the sticky header.** `.nav` is `position: sticky`, so a jump to an
+  id lands that element under it unless it has a scroll margin. `[id] { scroll-margin-top: 80px; }`
+  covers every target, not only `<section>`s: the ways card's `#faq-website` link opens on a
+  `<details>`, and with a section-only rule its question sat hidden under the nav.
 - Not a rule, but the same class of thing: `.btn` sets `font-family: inherit; line-height: inherit`
   because one `.btn` on this site is a `<button>` and the rest are `<a>`s, and a `<button>` inherits
   neither.

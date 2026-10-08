@@ -309,7 +309,7 @@ app.get('/setup.html', page('setup.html'));
  *     read as one illustration through its aria-label. Its stay is the hero's three nights at
  *     $150. What this section claims is the whole of the integration: nothing about photos,
  *     reminders or the assistant booking on its own, and no number handed to her by us. Card
- *     payments and the back-office assistant follow as the two "Also on Pro" cards.
+ *     payments and the back-office helper follow as the two "Also on Pro" cards.
  * [section class="section band"] Control, and the fear of a bot or a lost client. Everything the
  *     page says about a client changing or cancelling their own booking lives HERE and nowhere
  *     else, so the rule is read once, whole. .features-3 rather than bare .features: three cards
@@ -1118,7 +1118,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
               <p>Clients message your own WhatsApp number to book, get a quote, reschedule or cancel. Each new request reaches you as a WhatsApp alert with Confirm and Decline buttons, and your client hears the answer.</p>
             </div>
             <div class="feature">
-              <h3>An assistant for your back office</h3>
+              <h3>A helper for your back office</h3>
               <p>Ask who still owes you or what next week looks like, and get the answer from your own records.</p>
             </div>
             <div class="feature">
@@ -1137,7 +1137,7 @@ const HOW_IT_WORKS_HTML = `<!doctype html>
             <p><strong>Sign up.</strong> Enter your email on the homepage and we will email you a sign-up link.</p>
             <p><strong>Set up your services and rates.</strong> The wizard offers presets, each a whole service already shaped, so you tap the ones that describe you and type your prices.</p>
             <p><strong>Share your booking page.</strong> No website? Copy your booking link from <strong>Settings &rarr; Your website</strong>, and send it to clients. Have a website? Copy the code from the same place, already carrying your business&rsquo;s name, and paste it into a Code block on Squarespace, or use the second code with Wix&rsquo;s &ldquo;Embed a site&rdquo;. It sizes itself to fit.</p>
-            <p class="note">${PRICE_LINE} Pro adds booking by WhatsApp, card payments and a back-office assistant. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
+            <p class="note">${PRICE_LINE} Pro adds booking by WhatsApp, card payments and a back-office helper. You pay Stripe&rsquo;s published rate on a card payment and no fee to Pawservation.</p>
             <p class="note">${TRIAL_LINE}</p>
             <p class="note">Want every step written out, from your first sign-in to connecting WhatsApp? Read the <a href="/getting-started">setup guide</a>.</p>
           </div>
@@ -1291,7 +1291,7 @@ const PRIVACY_HTML = `<!doctype html>
           </div>
           <div class="feature">
             <h2>Conversations with Pro&rsquo;s AI features</h2>
-            <p>When a client or a sitter uses one of Pro&rsquo;s AI features, we keep a transcript of the messages they send and the assistant&rsquo;s replies, stored on Pawservation&rsquo;s own systems. That covers the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office assistant. When a client connects their own AI assistant (Claude, for example), we keep only what that assistant sends to Pawservation (its requests and our answers), not the client&rsquo;s own conversation with their assistant.</p>
+            <p>When a client or a sitter uses one of Pro&rsquo;s AI features, we keep a transcript of the messages they send and the assistant&rsquo;s replies, stored on Pawservation&rsquo;s own systems. That covers the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office helper. When a client connects their own AI assistant (Claude, for example), we keep only what that assistant sends to Pawservation (its requests and our answers), not the client&rsquo;s own conversation with their assistant.</p>
             <p>Before a transcript is stored, we remove verification codes and any other standalone six-digit number, booking confirmation codes, and payment links.</p>
             <p>The Pawservation operator reads these transcripts to support customers, fix problems, and improve the service. Sitters don&rsquo;t see this archive.</p>
             <p>Messages are also checked automatically for profanity, and a flagged word is recorded alongside the message, as a sign that someone may be having trouble. It is never used to make any decision about the person.</p>
@@ -1303,7 +1303,7 @@ const PRIVACY_HTML = `<!doctype html>
             <p><strong>Resend</strong> sends our email (login codes, sign-up links, booking confirmations, password-reset links) and nothing else; we don&rsquo;t use it for marketing.</p>
             <p><strong>Google</strong> only sees booking data if a sitter connects Google Calendar, and only enough to write an event: pet names, times, cost, and the client&rsquo;s email address.</p>
             <p><strong>Stripe</strong> processes a sitter&rsquo;s Pawservation subscription; the card for it is entered on Stripe&rsquo;s own page, and we never see the card number. On Pro, a client&rsquo;s card payment is also processed by Stripe, under the sitter&rsquo;s own Stripe account.</p>
-            <p><strong>Anthropic</strong> provides the AI model behind the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office assistant. When someone uses one of those, what they type and the booking details needed to answer them (dates, pets, prices) are sent to Anthropic&rsquo;s model to write the reply. A client who connects their own AI assistant uses that assistant&rsquo;s model, not ours.</p>
+            <p><strong>Anthropic</strong> provides the AI model behind the booking assistant that answers clients on WhatsApp and the sitter&rsquo;s back-office helper. When someone uses one of those, what they type and the booking details needed to answer them (dates, pets, prices) are sent to Anthropic&rsquo;s model to write the reply. A client who connects their own AI assistant uses that assistant&rsquo;s model, not ours.</p>
             <p><strong>Meta</strong> carries WhatsApp messages, only if a sitter on Pro connects WhatsApp: a client&rsquo;s messages to that sitter and the replies pass through Meta&rsquo;s WhatsApp service.</p>
           </div>
           <div class="feature">

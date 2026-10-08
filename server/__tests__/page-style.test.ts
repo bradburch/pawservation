@@ -92,6 +92,12 @@ describe('PAGE_STYLE: one token set, light and dark', () => {
     expect(rest).not.toMatch(/rgba?\(/i);
   });
 
+  it('clears the sticky header for every in-page target, not only sections', () => {
+    // The ways card links #faq-website, a <details> in the FAQ: without a margin of its own the
+    // jump lands it under the sticky nav, and the question the link promised is hidden.
+    expect(PAGE_STYLE).toMatch(/\[id\]\s*\{\s*scroll-margin-top: 80px;/);
+  });
+
   it('narrows the side gutter to 16px on a phone', () => {
     expect(PAGE_STYLE).toMatch(
       /@media \(max-width: 560px\)\s*\{[^}]*\.wrap\s*\{[^}]*padding: 0 16px/,
