@@ -111,7 +111,7 @@ function shell(title: string, body: string, opts: { turnstile?: boolean } = {}):
     <main class="wrap" style="padding:96px 0;">
       <div class="cta-panel" style="max-width:640px;margin:0 auto;">
         ${body}
-        <p class="note" style="margin:20px auto 0;"><a href="/" style="color:#c4d2c6;">&larr; Back to the homepage</a></p>
+        <p class="note" style="margin:20px auto 0;"><a class="signup-back" href="/">&larr; Back to the homepage</a></p>
       </div>
     </main>
   </body>
@@ -129,8 +129,8 @@ function renderSignupPage(
     ? 'Enter your email and we&rsquo;ll be in touch within a day to set up your account.'
     : `Enter your email to start your ${PRICING.trialDays}-day free trial. We&rsquo;ll email you a link to set your password.`;
   const lead = opts.error
-    ? `<p class="note" role="alert" style="color:#fff;margin:0 auto 8px;font-size:1rem;">${opts.error}</p>`
-    : `<p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">${intro}</p>`;
+    ? `<p class="note signup-error" role="alert" style="margin:0 auto 8px;font-size:1rem;">${opts.error}</p>`
+    : `<p class="note" style="margin:0 auto 8px;font-size:1rem;">${intro}</p>`;
   return shell(
     'Pawservation: sign up',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">Sign up for Pawservation</h1>
@@ -153,13 +153,13 @@ function renderSentPage(mode: SignupMode, prototypeLink?: string): string {
     ? 'If that address can sign up, your link is on its way. It works for 30 minutes.'
     : 'We&rsquo;ll email you within a day, once your account is ready.';
   const dev = prototypeLink
-    ? `<p class="note" style="margin:12px auto 0;"><a href="${htmlEscape(prototypeLink)}" style="color:#fff;">Open your sign-up link (local development)</a></p>`
+    ? `<p class="note" style="margin:12px auto 0;"><a href="${htmlEscape(prototypeLink)}">Open your sign-up link (local development)</a></p>`
     : '';
   return shell(
     open ? 'Pawservation: Check your email' : 'Pawservation: request received',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">${open ? 'Check your email' : 'Thanks, we&rsquo;ve got it'}</h1>
-        <p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">${copy}</p>${dev}
-        <p class="note" style="color:#c4d2c6;margin:12px auto 0;">While you wait, read <a href="/getting-started" style="color:#fff;">the setup guide</a>. Already have an account? <a href="/admin" style="color:#fff;">Sign in</a>.</p>`,
+        <p class="note" style="margin:0 auto 8px;font-size:1rem;">${copy}</p>${dev}
+        <p class="note" style="margin:12px auto 0;">While you wait, read <a href="/getting-started">the setup guide</a>. Already have an account? <a href="/admin">Sign in</a>.</p>`,
   );
 }
 
@@ -167,7 +167,7 @@ function renderUnavailable(): string {
   return shell(
     'Pawservation: sign up',
     `<h1 style="font-size:1.6rem;margin:0 0 8px;">Sign-up is temporarily unavailable</h1>
-        <p class="note" style="color:#c4d2c6;margin:0 auto 8px;font-size:1rem;">Please try again later.</p>`,
+        <p class="note" style="margin:0 auto 8px;font-size:1rem;">Please try again later.</p>`,
   );
 }
 

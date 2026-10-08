@@ -631,9 +631,9 @@ describe('SEO surface', () => {
   it('keeps the three shared-stylesheet rules whose absence is invisible', async () => {
     const { env } = createTestEnv();
     const body = await (await app.request('/', {}, env)).text();
-    // 1. The focus ring is --green, which is 1.83:1 against the CTA panel's dark gradient and
-    //    reads as no ring at all. The panel holds the invite form's submit button.
-    expect(body).toContain('.cta-panel :focus-visible { outline-color: #fff; }');
+    // 1. The focus ring is --link, which in the light scheme is under 2:1 against the CTA panel's
+    //    dark band and reads as no ring at all. The panel holds the page's primary action.
+    expect(body).toContain('.cta-panel :focus-visible { outline-color: var(--band-ink); }');
     // 2. A <button> inherits neither font-family nor line-height from body, and the invite form's
     //    submit is the one .btn on this site that is not an <a>. Without these it rendered in
     //    Arial at 39px beside a 46px .btn-inverse doing the same job on /how-it-works.

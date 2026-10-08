@@ -129,7 +129,7 @@ describe('GET /signup', () => {
 describe('the sign-up pages read well', () => {
   it('styles the h1 on the dark panel (it was ink-on-green, invisible)', async () => {
     const { PAGE_STYLE } = await import('../lib/page-style');
-    expect(PAGE_STYLE).toMatch(/\.cta-panel h1[^{]*\{[^}]*color: #fff/);
+    expect(PAGE_STYLE).toMatch(/\.cta-panel h1[^{]*\{[^}]*color: var\(--band-ink\)/);
   });
 
   it('/signup leads with the trial, and says "sign-up link" at most once', async () => {
