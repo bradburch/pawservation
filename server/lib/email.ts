@@ -77,11 +77,11 @@ const LOGO_H = 70;
 // --line in server/lib/page-style.ts, the same values as --leaf/--ink/--body/--soft/--line in
 // app/admin/admin.css). Inline styles only: email clients strip <style> blocks, and no web fonts,
 // so the copy falls back to the same system stack the site names in --sans.
-const EMAIL_ACCENT = '#2e6440'; // --green / --leaf
-const EMAIL_INK = '#18271d'; // --ink
-const EMAIL_BODY = '#415044'; // --body-c
-const EMAIL_SOFT = '#5a6a5e'; // --soft
-const EMAIL_LINE = '#e3e7e0'; // --line
+const EMAIL_ACCENT = '#4a7a5c'; // --accent (sage)
+const EMAIL_INK = '#26392f'; // --ink
+const EMAIL_BODY = '#3d4a42'; // --body-c
+const EMAIL_SOFT = '#56655c'; // --soft
+const EMAIL_LINE = '#dce3d6'; // --line
 const EMAIL_FONTS =
   "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 

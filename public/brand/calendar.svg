@@ -14,28 +14,28 @@
     </g>
   </g></g>
   </defs>
-  <rect x="26" y="30" width="92" height="84" rx="10" fill="#F4EDDC" stroke="#1E4736" stroke-width="4"/>
+  <rect x="26" y="30" width="92" height="84" rx="10" fill="#E8EEE4" stroke="#26392F" stroke-width="4"/>
   <g clip-path="url(#pbBandM)">
-    <rect x="26" y="30" width="92" height="28" fill="#F4EDDC"/>
+    <rect x="26" y="30" width="92" height="28" fill="#E8EEE4"/>
     <path d="M26 58 L54 33 L72 49 L94 29 L118 51 V58 Z" fill="#8AA07E"/>
-    <path d="M26 58 L26 52 L46 37 L64 53 L86 33 L106 51 L118 45 V58 Z" fill="#1E4736"/>
+    <path d="M26 58 L26 52 L46 37 L64 53 L86 33 L106 51 L118 45 V58 Z" fill="#26392F"/>
   </g>
-  <line x1="27" y1="58" x2="117" y2="58" stroke="#1E4736" stroke-width="2.5"/>
-  <rect x="44" y="20" width="7" height="18" rx="3.5" fill="#1E4736"/>
-  <rect x="93" y="20" width="7" height="18" rx="3.5" fill="#1E4736"/>
-  <g stroke="#1E4736" stroke-opacity="0.22" stroke-width="2">
+  <line x1="27" y1="58" x2="117" y2="58" stroke="#26392F" stroke-width="2.5"/>
+  <rect x="44" y="20" width="7" height="18" rx="3.5" fill="#26392F"/>
+  <rect x="93" y="20" width="7" height="18" rx="3.5" fill="#26392F"/>
+  <g stroke="#26392F" stroke-opacity="0.22" stroke-width="2">
     <line x1="49" y1="58" x2="49" y2="112"/>
     <line x1="72" y1="58" x2="72" y2="112"/>
     <line x1="95" y1="58" x2="95" y2="112"/>
     <line x1="28" y1="76" x2="116" y2="76"/>
     <line x1="28" y1="95" x2="116" y2="95"/>
   </g>
-  <g fill="#1E4736" fill-opacity="0.3">
+  <g fill="#26392F" fill-opacity="0.3">
     <circle cx="37.5" cy="67" r="2"/><circle cx="83.5" cy="67" r="2"/><circle cx="106.5" cy="67" r="2"/>
     <circle cx="37.5" cy="85.5" r="2"/><circle cx="60.5" cy="85.5" r="2"/><circle cx="83.5" cy="85.5" r="2"/>
     <circle cx="60.5" cy="103.5" r="2"/><circle cx="83.5" cy="103.5" r="2"/><circle cx="106.5" cy="103.5" r="2"/>
   </g>
-  <use href="#bradpaw" fill="#C2703E" transform="translate(60.5 66.8) rotate(-4) scale(0.0797) translate(-87.855 -74.34)"/>
-  <use href="#bradpaw" fill="#C2703E" transform="translate(106.5 85.3) rotate(3) scale(0.0797) translate(-87.855 -74.34)"/>
-  <use href="#bradpaw" fill="#C2703E" transform="translate(37.5 103.3) rotate(-3) scale(0.0797) translate(-87.855 -74.34)"/>
+  <use href="#bradpaw" fill="#4A7A5C" transform="translate(60.5 66.8) rotate(-4) scale(0.0797) translate(-87.855 -74.34)"/>
+  <use href="#bradpaw" fill="#4A7A5C" transform="translate(106.5 85.3) rotate(3) scale(0.0797) translate(-87.855 -74.34)"/>
+  <use href="#bradpaw" fill="#4A7A5C" transform="translate(37.5 103.3) rotate(-3) scale(0.0797) translate(-87.855 -74.34)"/>
 </svg>
