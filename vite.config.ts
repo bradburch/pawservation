@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
-import { fillPlanPrices } from './server/lib/plan-pricing.ts';
+import { fillPlanPrices } from './server/lib/plan-pricing.js';
 
 export default defineConfig({
   plugins: [
