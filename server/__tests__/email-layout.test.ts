@@ -19,17 +19,17 @@ describe('emailShell', () => {
   it('renders the accent bar, the brand lockup, content, and styled container', () => {
     const html = emailShell('<p>hi</p>');
     expect(html).toContain('max-width:560px');
-    expect(html).toContain('background:#2e6440'); // accent bar — --green / --leaf
+    expect(html).toContain('background:#4a7a5c'); // accent bar — --accent (sage)
     expect(html).toContain(`<img src="${LOGO_URL}"`);
     expect(html).toContain('<p>hi</p>');
   });
 
   it('uses the site palette, not stale one-off colours', () => {
     const html = emailShell('<p>hi</p>', 'Sent by Pawservation');
-    expect(html).toContain('color:#415044'); // --body-c, the site's body copy colour
-    expect(html).toContain('color:#18271d'); // --ink, on the logo's alt text
-    expect(html).toContain('color:#5a6a5e'); // --soft, the footer
-    expect(html).toContain('1px solid #e3e7e0'); // --line
+    expect(html).toContain('color:#3d4a42'); // --body-c, the site's body copy colour
+    expect(html).toContain('color:#26392f'); // --ink, on the logo's alt text
+    expect(html).toContain('color:#56655c'); // --soft, the footer
+    expect(html).toContain('1px solid #dce3d6'); // --line
     // #697a6d was a hand-picked grey that matched no token.
     expect(html).not.toContain('697a6d');
     // The 🐾 emoji was the pre-brand stand-in for a logo.
@@ -50,7 +50,7 @@ describe('emailShell', () => {
     expect(img).toContain('alt="Pawservation"');
     // Alt text inherits the img's own font/colour rules in clients that block images.
     expect(img).toContain('font-family:');
-    expect(img).toContain('color:#18271d');
+    expect(img).toContain('color:#26392f');
     expect(img).toContain('width="180"');
     expect(img).toContain('height="70"');
   });

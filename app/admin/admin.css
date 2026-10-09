@@ -1,23 +1,24 @@
 /*
  * Sitter dashboard — Pawservation's clean, professional SaaS identity, first-party,
  * sharing the landing page's design system so the whole product reads as one brand.
- * Near-white page, white section cards with icon headers, brand-green (#2e6440) actions.
+ * Sage-tinted page, white section cards with icon headers, sage (#4a7a5c) actions.
  * A single sans stack carries everything; headings get their voice from weight + tight
  * tracking, not a display family. Sage mid-tones carry washes and quiet borders, cool
  * grey-green neutrals rule the lines. Mono survives only in embed snippets.
  */
 :root {
-  --page: #fcfcfa;
+  /* Sage & sand palette, shared with the marketing pages (server/lib/page-style.ts). */
+  --page: #f7f6f1;
   --card: #ffffff;
-  --ink: #18271d;
-  --body: #415044;
-  --soft: #5a6a5e;
-  --line: #e3e7e0;
-  --sage: #9db2a2;
-  --sage-wash: #f1f5ee;
-  --leaf: #2e6440;
-  --deep: #1d3826;
-  --deepest: #142919;
+  --ink: #26392f;
+  --body: #3d4a42;
+  --soft: #56655c;
+  --line: #dce3d6;
+  --sage: #8aa07e;
+  --sage-wash: #e8eee4;
+  --leaf: #4a7a5c;
+  --deep: #3a6149;
+  --deepest: #2b4a38;
   --ok: #23684a;
   --ok-wash: #e7f2e8;
   --warn: #8a6b1c;
@@ -708,9 +709,9 @@ body {
   justify-content: center;
   gap: 14px;
   padding: 12px 20px;
-  background: var(--ink);
-  color: #fff;
-  box-shadow: 0 -8px 24px -16px rgba(24, 39, 29, 0.7);
+  background: var(--sage-wash);
+  color: var(--ink);
+  box-shadow: 0 -8px 24px -16px rgba(38, 57, 47, 0.45);
 }
 
 .pb-savebar p {
@@ -719,19 +720,19 @@ body {
 }
 
 .pb-savebar-error {
-  color: #f4b9ae;
+  color: #9b3a2e;
   font-weight: 600;
 }
 
 .pb-savebar-saved {
-  color: #bce3c6;
+  color: #2f6b4a;
   font-weight: 600;
 }
 
 .pb-wrap .pb-savebar button {
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
-  border-color: #fff;
+  border-color: var(--line);
 }
 
 .pb-wrap .pb-savebar button:hover {
@@ -1173,7 +1174,7 @@ body {
   filter: none;
 }
 /* Selected/enabled tile: leaf border reads as 2px (inset ring avoids layout shift) on the
-   sage wash. --leaf #2e6440 vs --sage-wash #f1f5ee ≈ 6.4:1 — comfortably past the 3:1
+   sage wash. --leaf #4a7a5c vs --sage-wash #e8eee4 ≈ 4.6:1 — comfortably past the 3:1
    WCAG 1.4.11 non-text minimum the old sage border (≈1.6:1) failed. */
 .pb-wrap .pb-tile-btn.pb-on {
   border-color: var(--leaf);

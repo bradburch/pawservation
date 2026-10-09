@@ -95,7 +95,9 @@ describe('PAGE_STYLE: one light token set', () => {
 
   it('meets 4.5:1 for every text pair', () => {
     for (const [fg, bg] of PAIRS)
-      expect(contrast(light.get(fg)!, light.get(bg)!), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(light.get(fg)!, light.get(bg)!), `${fg} on ${bg}`).toBeGreaterThanOrEqual(
+        4.5,
+      );
   });
 
   it('keeps every color literal inside the two token blocks', () => {

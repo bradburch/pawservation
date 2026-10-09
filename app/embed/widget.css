@@ -1,21 +1,21 @@
 /*
  * Embed widget — clean professional SaaS identity, restrained for a guest on any host page.
  * The tenant's chosen colour drives every ACTION via --bp-accent (set at runtime in App.tsx);
- * the fallback is Pawservation's own brand green. Pawservation owns only the quiet bones: a cool
- * off-white surface, deep-green ink, cool sage-gray neutrals, and a plain system sans set in a
+ * the fallback is Pawservation's own sage. Pawservation owns only the quiet bones: a warm
+ * off-white surface, forest ink, sage-gray neutrals, and a plain system sans set in a
  * tight, confident weight for headings/buttons. The signature moment is the calendar's connected
  * range band.
  */
 :root {
-  --bp-accent: #2e6440; /* brand-green fallback; the tenant overrides this per widget */
-  --bp-page: #fcfcfa;
+  --bp-accent: #4a7a5c; /* sage fallback; the tenant overrides this per widget */
+  --bp-page: #f7f6f1;
   --bp-card: #ffffff;
-  --bp-ink: #18271d;
-  --bp-body: #415044;
-  --bp-soft: #5a6a5e;
-  --bp-line: #e3e7e0;
-  --bp-sage: #9db2a2;
-  --bp-sage-wash: #f1f5ee;
+  --bp-ink: #26392f;
+  --bp-body: #3d4a42;
+  --bp-soft: #56655c;
+  --bp-line: #dce3d6;
+  --bp-sage: #8aa07e;
+  --bp-sage-wash: #e8eee4;
   --bp-ok: #23684a;
   --bp-ok-wash: #e7f2e8;
   --bp-bad: #b23a30;
@@ -41,7 +41,7 @@ body {
   background: var(--bp-page);
   border: 1px solid var(--bp-line);
   border-radius: 12px;
-  box-shadow: 0 14px 34px -26px rgba(24, 39, 29, 0.5);
+  box-shadow: 0 14px 34px -26px rgba(38, 57, 47, 0.5);
 }
 
 /* ── Headings & topline ────────────────────────────────────────── */
