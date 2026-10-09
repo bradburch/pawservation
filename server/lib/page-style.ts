@@ -21,84 +21,52 @@ const RAW = /* css */ `
         font-weight: 600;
         font-display: swap;
       }
-      /* Every color on these pages is a role token, defined here and redefined once for dark mode
-         directly below; no rule outside the two blocks names a color. Each text pair passes 4.5:1 in
+      /* Every color on these pages is a role token, defined here; no rule outside this block names
+         a color. The site is light only, by choice (no OS dark mode). Each text pair passes 4.5:1 in
          both schemes, and server/__tests__/page-style.test.ts computes the ratios. The greens come
          from the widget's own palette (app/embed/widget.css), so the screenshots and the page read
          as one product. */
       :root {
-        color-scheme: light dark;
-        --bg: #fbfaf6;
-        --panel: #f0f4ec;
+        color-scheme: light;
+        /* Sage & sand palette (light). Sage is darkened to --btn-bg so white button text clears
+           WCAG AA (5.0:1); the brand sage #8aa07e only ever decorates. The band is light sage now
+           (it was a dark green panel). */
+        --bg: #f7f6f1;
+        --panel: #e8eee4;
         --card: #ffffff;
-        --ink: #17261c;
-        --body-c: #3e4c41;
-        --soft: #56665a;
-        --line: #e1e6dc;
-        --link: #2a5c3b;
-        --btn-bg: #2e6440;
+        --ink: #26392f;
+        --body-c: #3d4a42;
+        --soft: #56655c;
+        --line: #dce3d6;
+        --link: #3a6149;
+        --btn-bg: #4a7a5c;
         --btn-ink: #ffffff;
-        --band-bg: #1d3826;
-        --band-ink: #f3f7f2;
-        --band-soft: #c4d2c6;
-        --band-mute: #8fa896;
-        --chip-bg: #fbecc8;
-        --chip-ink: #4a3a0c;
+        --band-bg: #e8eee4;
+        --band-ink: #26392f;
+        --band-soft: #3d4a42;
+        --band-mute: #56665c;
+        --chip-bg: #e1ead9;
+        --chip-ink: #2f4a38;
         --bubble-in: #ffffff;
         --bubble-out: #e2f1e5;
-        --phone: #17261c;
+        --phone: #26392f;
         --pend-bg: #f8f1de;
         --pend-ink: #7a5d14;
         --ok-bg: #e7f2e8;
         --ok-ink: #1f5c3f;
-        --code-bg: #142919;
-        --code-ink: #e8efe8;
-        --code-tag: #93c9a4;
-        --code-attr: #d8c98a;
-        --nav-bg: #fbfaf6e0;
-        --shadow: #17261c1f;
-        --field-bg: #2a4332;
-        --field-line: #f3f7f22e;
+        --code-bg: #eef3ea;
+        --code-ink: #26392f;
+        --code-tag: #2f6b4a;
+        --code-attr: #7a5d14;
+        --nav-bg: #f7f6f1e0;
+        --shadow: #26392f1f;
+        --field-bg: #ffffff;
+        --field-line: #dce3d6;
         --display: 'Fraunces', Georgia, 'Times New Roman', serif;
         --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
           Helvetica, Arial, sans-serif;
         --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
           "Liberation Mono", monospace;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #0f1912;
-          --panel: #142118;
-          --card: #192a1e;
-          --ink: #eef3ee;
-          --body-c: #c8d3ca;
-          --soft: #a3b3a6;
-          --line: #2a3c2f;
-          --link: #8fd0a8;
-          --btn-bg: #8fd0a8;
-          --btn-ink: #0f1912;
-          --band-bg: #1d3826;
-          --band-ink: #f3f7f2;
-          --band-soft: #c4d2c6;
-          --band-mute: #8fa896;
-          --chip-bg: #3a3118;
-          --chip-ink: #f6e4b4;
-          --bubble-in: #223528;
-          --bubble-out: #28452f;
-          --phone: #050a07;
-          --pend-bg: #3a3118;
-          --pend-ink: #f6e4b4;
-          --ok-bg: #1f3a28;
-          --ok-ink: #bfe5cb;
-          --code-bg: #050a07;
-          --code-ink: #e8efe8;
-          --code-tag: #93c9a4;
-          --code-attr: #d8c98a;
-          --nav-bg: #0f1912e0;
-          --shadow: #0000008c;
-          --field-bg: #2a4332;
-          --field-line: #f3f7f22e;
-        }
       }
       * { box-sizing: border-box; }
       html {
@@ -272,8 +240,7 @@ const RAW = /* css */ `
         background: var(--btn-bg);
         color: var(--btn-ink);
       }
-      /* Toward the ink: darker on the light page, lighter on the dark one, so the hover always
-         moves away from the button text rather than toward it. */
+      /* Toward the ink, so the hover always moves away from the button text rather than toward it. */
       .btn-primary:hover { background: color-mix(in srgb, var(--btn-bg) 85%, var(--ink)); }
       .btn-ghost {
         color: var(--ink);
@@ -283,10 +250,10 @@ const RAW = /* css */ `
       .btn-ghost:hover { border-color: var(--soft); }
       .btn-sm { padding: 8px 16px; font-size: 0.88rem; }
       .btn-inverse {
-        background: var(--band-ink);
-        color: var(--band-bg);
+        background: var(--card);
+        color: var(--link);
       }
-      .btn-inverse:hover { background: var(--band-soft); }
+      .btn-inverse:hover { background: var(--panel); }
 
       /* ── Hero ───────────────────────────────────────────────────── */
       .hero { padding: 72px 0 88px; }
@@ -1081,7 +1048,7 @@ const RAW = /* css */ `
         text-align: center;
       }
       /* h1 too: the /signup pages put their h1 on this panel, and unstyled it inherited the page's
-         ink, invisible on the dark green. */
+         ink, invisible on the green band. */
       .cta-panel h1,
       .cta-panel h2 {
         color: var(--band-ink);
@@ -1146,8 +1113,7 @@ const RAW = /* css */ `
         border-radius: 4px;
       }
       /* The ring above is --link, which suits every ground on this site but one: the CTA panel's
-         dark band, where the light scheme's link green on the band green is under 2:1 and reads as no
-         ring at all. That band holds the invite button, the "already have an account" link and the tour's
+         band, where a link-green ring on the band's own green reads as no ring at all. That band holds the invite button, the "already have an account" link and the tour's
          demo/pricing links, so a keyboard visitor loses the page's primary action. Only the COLOR
          is overridden, so width, offset and radius stay one rule; the panel's own form fields
          already focus in the band's ink, which is the shape this follows. */
@@ -1213,9 +1179,9 @@ const RAW = /* css */ `
         margin-top: 4px;
       }
       .signup-submit button { border: 0; cursor: pointer; }
-      /* The sign-up pages' lines on the dark panel. .cta-panel p already sets their color; the
+      /* The sign-up pages' lines on the CTA panel. .cta-panel p already sets their color; the
          refusal that replaces the lead is the band's ink, and a note's links would otherwise take
-         .note a's page ink, which is dark on the band in the light scheme. */
+         .note a's page ink. */
       .cta-panel .signup-error { color: var(--band-ink); }
       .cta-panel .note a {
         color: var(--band-ink);
