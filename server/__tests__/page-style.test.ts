@@ -6,7 +6,6 @@ import { PAGE_STYLE } from '../lib/page-style';
 import { createTestEnv } from './helpers';
 
 const ROOT_BLOCK = /:root\s*\{([^}]*)\}/g;
-const DARK = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([^}]*)\}/;
 
 function tokens(block: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -62,10 +61,9 @@ const PAIRS: [string, string][] = [
   ['code-attr', 'code-bg'],
 ];
 
-describe('PAGE_STYLE: one token set, light and dark', () => {
+describe('PAGE_STYLE: one light token set', () => {
   const blocks = [...PAGE_STYLE.matchAll(ROOT_BLOCK)].map((m) => m[1]);
   const light = tokens(blocks[0] ?? '');
-  const dark = tokens(DARK.exec(PAGE_STYLE)?.[1] ?? '');
 
   it('gives the sign-up fields solid tokens, not a color-mix() a browser may not support', () => {
     const rule = PAGE_STYLE.match(/\.signup-field input,[^{]*\{([^}]*)\}/)?.[1] ?? '';
@@ -89,26 +87,15 @@ describe('PAGE_STYLE: one token set, light and dark', () => {
     expect(style).not.toContain('/*');
   });
 
-  it('has exactly two :root blocks, the second under prefers-color-scheme: dark', () => {
-    expect(blocks.length).toBe(2);
-    expect(DARK.test(PAGE_STYLE)).toBe(true);
-    expect(PAGE_STYLE).toContain('color-scheme: light dark');
+  it('has exactly one :root block and no dark scheme', () => {
+    expect(blocks.length).toBe(1);
+    expect(PAGE_STYLE).not.toContain('prefers-color-scheme');
+    expect(PAGE_STYLE).toContain('color-scheme: light;');
   });
 
-  it('redefines every color token in dark mode, and adds none', () => {
-    expect([...dark.keys()].sort()).toEqual([...light.keys()].sort());
-    for (const name of PAIRS.flat()) expect(light.has(name), name).toBe(true);
-  });
-
-  it('meets 4.5:1 for every text pair in both schemes', () => {
-    for (const [scheme, t] of [
-      ['light', light],
-      ['dark', dark],
-    ] as const)
-      for (const [fg, bg] of PAIRS)
-        expect(contrast(t.get(fg)!, t.get(bg)!), `${scheme} ${fg} on ${bg}`).toBeGreaterThanOrEqual(
-          4.5,
-        );
+  it('meets 4.5:1 for every text pair', () => {
+    for (const [fg, bg] of PAIRS)
+      expect(contrast(light.get(fg)!, light.get(bg)!), `${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
   });
 
   it('keeps every color literal inside the two token blocks', () => {
